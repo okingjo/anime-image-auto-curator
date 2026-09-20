@@ -70,6 +70,10 @@
   .lb-actions button{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:8px 20px;font-size:14px;cursor:pointer}
   .lb-actions button:hover{filter:brightness(1.15)}
   .lb-actions .lb-counter{color:#999;font-size:13px;display:flex;align-items:center}
+  .sub.st-shadow{color:#b794f6;background:#241a33;border:1px dashed #4a3a6a}
+  .vis{display:inline-block;font-size:9.5px;padding:1px 4px;border-radius:4px;margin-left:2px}
+  .vis.y{color:var(--ok);background:#16301f}
+  .vis.n{color:var(--mut);background:#1a1e29}
   .err{color:var(--bad);font-size:12px;margin-top:6px}
   .grow{flex:1}
 </style>
@@ -85,6 +89,8 @@
     <button onclick="exportJSON()">导出精选(JSON)</button>
     <input id="dest" type="text" placeholder="拷贝精选到目录(可选)" style="min-width:220px"/>
     <button onclick="exportCopy()">拷贝精选</button>
+    <label class="mut" title="把本次的选择结果+全部打分特征记录到 data/feedback/，用于以后校准结构打分权重">
+      <input id="record" type="checkbox" style="min-width:auto"/> 记录本次导出</label>
   </div>
   <div class="row" style="margin-top:8px">
     <span class="mut">美观度模型:</span>
@@ -92,6 +98,11 @@
     <span class="mut" id="aedesc"></span>
   </div>
   <div class="chips" id="chips"></div>
+  <div class="row" style="margin-top:6px">
+    <label class="mut" style="cursor:pointer"><input id="filterflags" type="checkbox"
+      style="min-width:auto" onchange="render()"/> 只看有结构问题的组</label>
+    <span class="mut" id="shadowhint"></span>
+  </div>
   <div class="err" id="err"></div>
 </header>
 <main>
@@ -104,6 +115,7 @@
   <img id="lbimg"/><div class="cap" id="lbcap"></div>
   <div class="lb-actions">
     <button onclick="lbSelect();event.stopPropagation()">✔ 选择它 (Enter)</button>
+    <button id="lbov" onclick="lbToggleOverlay();event.stopPropagation()" style="background:var(--card2);border:1px solid var(--line)">☸ 骨架 (O)</button>
     <span class="lb-counter" id="lbcounter"></span>
   </div>
   <button class="lb-nav next" onclick="lbNav(1);event.stopPropagation()" title="下一张 (→)">▶</button>
@@ -112,7 +124,8 @@
 <script>
 let STATE=null;
 const $=id=>document.getElementById(id);
-const SCORE_LABEL={quality:"质检",aesthetic:"美观",tagger_fidelity:"还原",vlm_judge:"VLM"};
+const SCORE_LABEL={quality:"质检",aesthetic:"美观",tagger_fidelity:"还原",vlm_judge:"VLM",structure:"结构"};
+const PART_LABEL={hand_l:"左手",hand_r:"右手",person:"人体",feet:"脚"};
 
 async function loadStatus(){
   const s=await (await fetch("/api/status")).json();
@@ -122,8 +135,12 @@ async function loadStatus(){
     const title=x.available?"":(x.reason||"");
     return `<span class="chip ${x.available?'on':'off'}" title="${title}">${x.label} · ${t}</span>`;
   }).join("");
+  const st=s.scorers.find(x=>x.name==="structure");
+  if(st&&st.available){
+    $("shadowhint").textContent="结构分为影子模式（仅展示+记录，不影响排序），校准后再启用权重";
+  }
   const hint=s.scorers.some(x=>!x.available)?
-    ' <span class="mut">提示：未启用的打分项可用 uv sync --extra aesthetic / vlm 开启</span>':"";
+    ' <span class="mut">提示：未启用的打分项可用 uv sync --extra aesthetic / structure 开启</span>':"";
   $("chips").innerHTML=chips+hint;
   renderAeSelect(s.aesthetic_backends||[]);
 }
@@ -184,9 +201,14 @@ function render(){
   $("empty").style.display="none";
   const g=$("groups"); g.innerHTML="";
   if(!STATE||!STATE.groups.length){g.innerHTML='<div class="empty">没有找到带 prompt 的图片。</div>';return;}
+  const onlyFlagged=$("filterflags")&&$("filterflags").checked;
+  let shown=0;
   STATE.groups.forEach((grp,gi)=>{
+    const hasFlags=grp.members.some(m=>Object.values(m.scores||{}).some(v=>(v.flags||[]).length));
+    if(onlyFlagged&&!hasFlags) return;
+    shown++;
     const pos=(grp.positive||"(无 prompt)");
-    const el=document.createElement("div"); el.className="group";
+    const el=document.createElement("div"); el.className="group"; el.dataset.gi=gi;
     const chars=grp.character_id?`<span class="tag">角色: ${grp.character_id}</span>`:"";
     el.innerHTML=`<div class="ghead">
       <div class="meta">${chars}<span class="tag">${grp.members.length} 张</span>
@@ -198,10 +220,25 @@ function render(){
       const sel=(grp.selected===m.filename);
       const rec=(grp.recommended===m.filename);
       const c=document.createElement("div"); c.className="icard"+(sel?" sel":"");
-      const subs=Object.entries(m.scores||{}).map(([k,v])=>
+      const st=(m.scores||{}).structure;
+      const subs=Object.entries(m.scores||{}).filter(([k])=>k!=="structure").map(([k,v])=>
         `<span class="sub">${SCORE_LABEL[k]||k} ${pct(v.score)}</span>`).join("");
+      // structure line: shadow score + part visibility icons
+      let stHtml="";
+      if(st){
+        const ssub=st.subs||{};
+        const vis=ssub.visible||{};
+        const icons=[];
+        if("person" in vis) icons.push(visIcon("人",vis.person));
+        if("hand_l" in vis) icons.push(visIcon("手L",vis.hand_l));
+        if("hand_r" in vis) icons.push(visIcon("手R",vis.hand_r));
+        (vis.yolo_parts||[]).forEach(p=>icons.push(visIcon(p,true)));
+        const parts=["body","hands","yolo"].filter(k=>ssub[k]!=null)
+          .map(k=>`${({body:"骨",hands:"手",yolo:"Y"})[k]}${pct(ssub[k])}`).join(" ");
+        stHtml=`<span class="sub st-shadow" title="影子模式：仅展示不影响排序">结构 ${pct(st.score)}${parts?" · "+parts:""} ${icons.join("")}</span>`;
+      }
       const flags=[];
-      Object.values(m.scores||{}).forEach(v=>(v.flags||[]).forEach(f=>flags.push(f)));
+      Object.entries(m.scores||{}).forEach(([k,v])=>(v.flags||[]).forEach(f=>flags.push(k==="structure"?f:`[${SCORE_LABEL[k]||k}] ${f}`)));
       if(m.outfit && m.outfit_ratio<0.6) flags.push(`服装tag匹配低(${pct(m.outfit_ratio)})`);
       const flagHtml=flags.map(f=>`<span class="flag">${escapeHtml(f)}</span>`).join("");
       const out=m.outfit?`<span class="sub">服装:${escapeHtml(m.outfit)} ${pct(m.outfit_ratio)}</span>`:"";
@@ -212,7 +249,7 @@ function render(){
         <div class="ibody">
           <div class="fname">${escapeHtml(m.filename)}</div>
           <div class="bar"><i style="width:${Math.round(m.composite*100)}%"></i></div>
-          <div class="subs">${subs}${out}</div>
+          <div class="subs">${subs}${out}${stHtml}</div>
           <div class="flags">${flagHtml}</div>
         </div>`;
       c.onclick=()=>selectImg(grp.key,m.filename,c);
@@ -227,6 +264,11 @@ function render(){
     cards.appendChild(blank);
     g.appendChild(el);
   });
+  if(onlyFlagged&&!shown){g.innerHTML='<div class="empty">没有带结构问题的组。</div>';}
+}
+
+function visIcon(label,on){
+  return `<span class="vis ${on?'y':'n'}" title="${escapeHtml(label)}:${on?'可见':'未检出'}">${escapeHtml(label)}${on?'✓':'—'}</span>`;
 }
 
 async function selectImg(key,filename,cardEl){
@@ -256,9 +298,22 @@ function _lbRender(){
   if(!grp||!grp.members.length) return;
   const m=grp.members[LB.idx];
   $("lbimg").src="/api/image?path="+encodeURIComponent(m.path);
-  $("lbcap").textContent=`${m.filename} · 综合 ${pct(m.composite)}`;
+  const st=(m.scores||{}).structure;
+  const stTxt=st?` · 结构 ${pct(st.score)}${st.flags&&st.flags.length?" · "+st.flags.slice(0,3).join("/"):""}`:"";
+  $("lbcap").textContent=`${m.filename} · 综合 ${pct(m.composite)}${stTxt}`;
   $("lbcounter").textContent=`组${LB.gi+1}/${STATE.groups.length} · ${LB.idx+1}/${grp.members.length}`;
-  $("lbcap").textContent=`${m.filename} · 综合 ${pct(m.composite)}`;
+  // overlay toggle only when structure data exists (scorer ran)
+  $("lbov").style.display=st?"":"none";
+  $("lbov").classList.remove("on");
+  LB.overlayOn=false;
+}
+
+function lbToggleOverlay(){
+  if(!STATE||LB.gi<0) return;
+  const m=STATE.groups[LB.gi].members[LB.idx];
+  LB.overlayOn=!LB.overlayOn;
+  $("lbov").classList.toggle("on",LB.overlayOn);
+  $("lbimg").src=(LB.overlayOn?"/api/overlay?path=":"/api/image?path=")+encodeURIComponent(m.path);
 }
 
 function lbNav(dir){
@@ -283,8 +338,9 @@ function lbSelect(){
   const grp=STATE.groups[LB.gi];
   if(!grp) return;
   const m=grp.members[LB.idx];
-  // trigger selection via the card element
-  const cards=document.querySelectorAll(".group")[LB.gi]?.querySelectorAll(".icard:not(.blank)");
+  // find the card by group index stored in data-gi (filter mode shifts DOM order)
+  const el=document.querySelector(`.group[data-gi="${LB.gi}"]`);
+  const cards=el?el.querySelectorAll(".icard:not(.blank)"):null;
   if(cards&&cards[LB.idx]) selectImg(grp.key,m.filename,cards[LB.idx]);
 }
 
@@ -300,24 +356,28 @@ document.addEventListener("keydown",e=>{
   else if(e.key==="ArrowUp"){lbNavGroup(-1);e.preventDefault();}
   else if(e.key==="ArrowDown"){lbNavGroup(1);e.preventDefault();}
   else if(e.key==="Enter"){lbSelect();e.preventDefault();}
+  else if(e.key==="o"||e.key==="O"){lbToggleOverlay();e.preventDefault();}
   else if(e.key==="Escape"){ $("lb").classList.remove("on");e.preventDefault();}
 });
 
 async function exportJSON(){
+  const record=$("record")&&$("record").checked;
   const j=await (await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({mode:"json"})})).json();
+    body:JSON.stringify({mode:"json",record})})).json();
   const blob=new Blob([JSON.stringify(j.selected,null,2)],{type:"application/json"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);
   a.download="curator-selected.json";a.click();
+  if(record&&j.feedback) $("err").textContent="";
 }
 async function exportCopy(){
   const dest=$("dest").value.trim();
   if(!dest){alert("请填写目标目录");return;}
+  const record=$("record")&&$("record").checked;
   const r=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({mode:"copy",dest})});
+    body:JSON.stringify({mode:"copy",dest,record})});
   const j=await r.json();
   if(!r.ok){alert(j.detail||"拷贝失败");return;}
-  alert("已拷贝 "+j.copied.length+" 张到:\n"+dest);
+  alert("已拷贝 "+j.copied.length+" 张到:\n"+dest+(record&&j.feedback?"\n已记录反馈: "+j.feedback:""));
 }
 
 const pct=x=>(x==null?"-":Math.round(x*100));

@@ -67,6 +67,13 @@ class Curator:
         want = self.config.get("aesthetic_model")
         if aes is not None and want:
             aes.set_backend(want, prewarm=False)
+        # configure structure scorer (DWPose + YOLO plate, shadow mode by default)
+        st = self.scorers.get("structure")
+        if st is not None and hasattr(st, "configure"):
+            try:
+                st.configure(self.config.get("structure") or {})
+            except Exception:
+                pass
         self.groups: dict = {}      # key -> {"key","positive","negative","character_id","members":[...]}
         self.selections: dict = {}  # key -> filename
         self.root: Optional[str] = None
@@ -204,6 +211,9 @@ class Curator:
             if res is None:
                 continue
             rec.scores[s.name] = res.to_dict()
+            # shadow mode: computed + displayed + recorded, but NOT in composite
+            if getattr(s, "shadow", False):
+                continue
             w = float(self.weights.get(s.name, 0.0))
             weighted_sum += w * float(res.score)
             weight_total += w
@@ -276,3 +286,52 @@ class Curator:
             shutil.copy2(src, dst)
             copied.append(str(dst))
         return copied
+
+    # ------------------------------------------------------------------ #
+    # Feedback recording (see docs/FEEDBACK_FORMAT.md)
+    # ------------------------------------------------------------------ #
+    def record_feedback(self, mode: str, exported: Optional[list] = None) -> Optional[str]:
+        """Append one JSONL line capturing this session's selections + features.
+
+        Called only when the user ticks “记录本次导出”. Returns the file path.
+        """
+        import datetime as _dt
+        import uuid as _uuid
+
+        st = self.scorers.get("structure")
+        record = {
+            "schema": "aic.feedback.v1",
+            "session_id": _uuid.uuid4().hex[:12],
+            "ts": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "mode": mode,
+            "root": self.root,
+            "weights": self.weights,
+            "aesthetic_backend": None,
+            "structure_cfg": None,
+            "scorers": [{"name": s.name, "available": s.available,
+                         "shadow": bool(getattr(s, "shadow", False))}
+                        for s in self.scorers.values()],
+            "n_groups": len(self.groups),
+            "exported": exported,
+            "groups": [],
+        }
+        aes = self.scorers.get("aesthetic")
+        if aes is not None and getattr(aes, "active", None) is not None:
+            record["aesthetic_backend"] = aes.active.id
+        if st is not None and hasattr(st, "cfg"):
+            record["structure_cfg"] = st.cfg
+        for g in self.groups.values():
+            record["groups"].append({
+                "key": g["key"],
+                "character_id": g["character_id"],
+                "positive": g["positive"][:2000],
+                "recommended": g.get("recommended"),
+                "selected": self.selections.get(g["key"], g.get("recommended")),
+                "members": [m.to_dict() for m in g["members"]],
+            })
+        out_dir = _ROOT / "data" / "feedback"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"feedback-{_dt.date.today().isoformat()}.jsonl"
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        return str(path)

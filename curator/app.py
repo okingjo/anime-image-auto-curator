@@ -141,6 +141,7 @@ def selected():
 class ExportReq(BaseModel):
     mode: str = "json"   # json | copy
     dest: str | None = None
+    record: bool = False   # 记录本次导出为反馈样本（用于校准结构打分）
 
 
 @app.post("/api/export")
@@ -149,8 +150,35 @@ def export(req: ExportReq):
         if not req.dest:
             raise HTTPException(400, "copy 模式需要 dest 目录")
         copied = curator.export_copy(req.dest)
-        return {"mode": "copy", "copied": copied}
-    return JSONResponse({"mode": "json", "selected": curator.selected_paths()})
+        fb = curator.record_feedback("copy", copied) if req.record else None
+        return {"mode": "copy", "copied": copied, "feedback": fb}
+    sel = curator.selected_paths()
+    fb = curator.record_feedback("json", [i["filename"] for i in sel]) if req.record else None
+    return JSONResponse({"mode": "json", "selected": sel, "feedback": fb})
+
+
+@app.get("/api/overlay")
+def overlay(path: str = Query(...)):
+    """DWPose skeleton overlay for the lightbox (structure scorer must be loaded)."""
+    import io
+
+    from PIL import Image
+
+    st = curator.scorers.get("structure")
+    if st is None or not st.available:
+        raise HTTPException(400, "结构打分器未启用（uv sync --extra structure）")
+    p = _safe_path(path)
+    cache = _ROOT / ".thumbs"
+    cache.mkdir(exist_ok=True)
+    key = hashlib.sha1(f"ov|{path}|{p.stat().st_mtime}".encode()).hexdigest()
+    out = cache / f"{key}.png"
+    if not out.exists():
+        with Image.open(p) as img:
+            ov = st.render_overlay(img)
+        buf = io.BytesIO()
+        ov.save(buf, "PNG")
+        out.write_bytes(buf.getvalue())
+    return FileResponse(out, media_type="image/png")
 
 
 # --------------------------------------------------------------------------- #

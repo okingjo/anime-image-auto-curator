@@ -25,6 +25,17 @@ aesthetic = [
     "onnxruntime",                # skytnt-anime backend (ONNX)
     "huggingface_hub",            # model downloads
 ]
+# 结构打分（影子模式）：DWPose 骨架/手部几何检查。仅靠 onnxruntime，不引入 torch。
+# 模型（~340MB）首次使用时自动从 hf-mirror 下载。
+structure = [
+    "onnxruntime",
+    "huggingface_hub",
+]
+# YOLO 部位检测板块（可选，仅当 curator.yaml 里配置了 structure.yolo.models 时需要）。
+# 注意：ultralytics 依赖 torch，建议与 --extra aesthetic 一起装。
+yolo = [
+    "ultralytics",
+]
 # 本地 VLM 结构/手部判定（Phase 3）。
 vlm = [
     "torch",

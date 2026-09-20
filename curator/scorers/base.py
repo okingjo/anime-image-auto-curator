@@ -58,6 +58,7 @@ def get_scorers() -> dict:
     for mod, cls_name, fallback_label in [
         (".quality", "QualityScorer", "质检"),
         (".aesthetic", "AestheticScorer", "美观度"),
+        (".structure", "StructureScorer", "结构"),
         (".vlm_judge", "VLMJudgeScorer", "VLM判定"),
     ]:
         try:

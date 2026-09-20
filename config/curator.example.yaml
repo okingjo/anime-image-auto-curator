@@ -22,3 +22,39 @@ weights:
   quality: 0.8
   aesthetic: 0.2
   vlm_judge: 0.0
+
+# ---------------------------------------------------------------------------
+# 结构打分（影子模式先行）：DWPose 骨架/手部几何 + 可选 YOLO 部位检测板块。
+# shadow:true 时，结构分只展示与记录（写入 data/feedback/），不进入综合排序；
+# 用一段时间、积累足够反馈后再把 structure 加入 weights 并关掉 shadow。
+#
+# parts：body/hands/yolo 三个子分的内部权重（仅对“可见”部分归一化）。
+# pose ：DWPose 配置。det_conf=人体检测阈值；hand_vis=手部关键点可见阈值；
+#        hand_min_palm=手掌尺寸小于人物框高度此比例时视为“太小不可判”（N/A）。
+# yolo ：部位检测板块。最多 4 个模型，每个模型一个部位，板块分 = 各模型分的平均。
+#        source 可为本地 .pt/.onnx 路径，或 "repo_id:filename"（自动从 hf-mirror 下载）。
+#        vis_floor=低于此置信度视为“未检出”（该部位 N/A，不扣分）；top_k=取最高 k 个。
+#        例：手/脚/脸各一个模型（需先 uv sync --extra yolo）。
+# ---------------------------------------------------------------------------
+structure:
+  shadow: true
+  parts:
+    body: 0.35
+    hands: 0.35
+    yolo: 0.30
+  pose:
+    enabled: true
+    det_conf: 0.30
+    max_persons: 3
+    body_vis: 0.35
+    hand_vis: 0.40
+    hand_min_palm: 0.035
+  yolo:
+    vis_floor: 0.35
+    top_k: 4
+    models: []
+    # 示例（取消注释并填入实际模型路径/HF 源，需 uv sync --extra yolo）：
+    # models:
+    #   - {id: hand, label: 手, source: "Bingsu/adetailer:hand_yolov8n.pt"}
+    #   - {id: face, label: 脸, source: "Bingsu/adetailer:face_yolov8n.pt"}
+    #   - {id: person, label: 人体, source: "/path/to/your_model.pt"}

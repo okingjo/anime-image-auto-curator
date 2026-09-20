@@ -60,7 +60,8 @@ if errorlevel 1 (
 )
 
 echo [INFO] 启动 Anime Image Curator ...
-echo [INFO] 浏览器打开 http://127.0.0.1:7861
+echo [INFO] 浏览器打开 http://127.0.0.1:8000 （被占用会自动顺延）
+echo [INFO] 结构打分需额外依赖：uv sync --extra structure
 uv run python -m curator.app !APP_ARGS!
 
 echo.

@@ -22,6 +22,7 @@
 |---|---|---|---|
 | **基础**（默认） | 读 prompt、分组、角色识别、轻量质检、WebUI、选优、导出 | 仅 fastapi/pillow 等 | 秒开，无大模型下载 |
 | **+aesthetic** | 美观度打分（兼作结构合理性参考），**多模型可切换** | `--extra aesthetic` | 见下表，首次使用按需下载 |
+| **+structure** | **结构打分（影子模式）**：DWPose 骨架/手部几何检查 + 可选 YOLO 部位板块 | `--extra structure`（YOLO 另需 `--extra yolo`） | 详见 docs/STRUCTURE_SCORER.md |
 | **+vlm** | 本地视觉语言模型 → 手部/肢体/服装结构判定（Phase 3） | `--extra vlm` | 7B 级 VLM，24G 显存轻松跑 |
 
 ## 美观度模型（WebUI 顶部下拉框可切换，切换后自动用新模型重打分）
@@ -80,6 +81,22 @@ uv sync --extra vlm
   复制为 `config/characters.yaml` 后按需修改。每个角色可定义**多套官方皮肤/服装**，其中一套标 `default: true`。
 - `config/curator.example.yaml` — 各打分项权重（默认质检 0.8、美观度 0.2）、缩略图尺寸等。复制为 `config/curator.yaml` 生效。
 
+## 结构打分（影子模式，需 `uv sync --extra structure`）
+
+基于 **DWPose 133 关键点**（身体+脸+双手，onnxruntime，无 torch）的几何规则检查：
+手指长度顺序/指节比例/指尖聚集/关节反折、左右肢体不对称、关节融合等。
+可另配 **最多 4 个 YOLO 部位模型**（手/脚/脸…）作为辅助板块，板块分为各模型均分。
+
+核心原则：**检出不到 = N/A 不扣分**（手放背后检不出手，不代表手有问题）；只对可见部位做几何检查。
+
+- **影子模式（默认）**：结构分只在 UI 展示（卡片紫色 chip + Lightbox 骨架叠加，O 键）并随导出记录，**不影响排序**；用真实数据校准阈值后再转正加权。
+- 配置见 `config/curator.example.yaml` 的 `structure:` 段；设计详见 `docs/STRUCTURE_SCORER.md`。
+- YOLO 板块需 `uv sync --extra yolo`（引入 ultralytics/torch），并在 `structure.yolo.models` 配置。
+
+## 反馈数据采集（校准结构打分的弹药）
+
+导出区新增 **「记录本次导出」** 勾选框：勾选后每次导出（JSON/拷贝）都会把本次全部选择 + 所有打分特征追加到 `data/feedback/feedback-YYYY-MM-DD.jsonl`。数据格式规格见 **`docs/FEEDBACK_FORMAT.md`**（含样本定义、N/A 语义、阈值校准与影子分转正的统计标准）。积累一段时间后把该目录交给分析（人或 AI）即可校准权重。
+
 ## 元数据格式（已实测）
 
 - **JPEG**：prompt 存在 EXIF `UserComment`，编码为 **UTF-16-BE**（很多工具读不出来，这里已处理）。
@@ -114,6 +131,7 @@ config/           配置示例
 | ← / → | 同组内切换上一张/下一张 |
 | ↑ / ↓ | 切换到上一组/下一组（每组从第一张开始） |
 | Enter | 选择当前查看的图片 |
+| O | 叠加/取消 DWPose 骨架（需 structure 打分器） |
 | Esc | 关闭放大视图 |
 
 > 每组末尾有一张虚线卡片「⊘ 全部不选」，点击后该组不导出任何图片。
