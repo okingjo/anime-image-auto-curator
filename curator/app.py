@@ -161,7 +161,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Anime Image Curator")
     parser.add_argument("--folder", help="启动后自动扫描的目录")
-    parser.add_argument("--port", type=int, default=7861)
+    parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--config", help="curator.yaml 路径")
     args = parser.parse_args()
@@ -187,13 +187,26 @@ def main():
 
         threading.Thread(target=_bg_scan, args=(args.folder,), daemon=True).start()
 
+    import socket
     import uvicorn
+
+    # Auto-increment port if occupied
+    port = args.port
+    for _ in range(100):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.1)
+            if s.connect_ex((args.host, port)) != 0:
+                break  # port is free
+        port += 1
+    else:
+        print(f"[ERROR] 无法找到可用端口 (尝试了 {args.port}-{port-1})")
+        return
 
     print("=" * 60)
     print("Anime Image Curator")
-    print(f"Open http://{args.host}:{args.port}")
+    print(f"Open http://{args.host}:{port}")
     print("=" * 60)
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(app, host=args.host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":
