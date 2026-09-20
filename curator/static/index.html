@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Anime Image Curator · 动漫图筛</title>
+<style>
+  :root{--bg:#12141a;--card:#1b1f28;--card2:#232836;--line:#2c3242;--txt:#e6e9ef;--mut:#9aa3b2;
+        --acc:#5b8cff;--gold:#ffcf5b;--bad:#ff6b6b;--ok:#4cd07d;}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.5 system-ui,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--txt)}
+  header{position:sticky;top:0;z-index:10;background:#0e1015ee;backdrop-filter:blur(6px);
+         border-bottom:1px solid var(--line);padding:10px 16px}
+  h1{font-size:16px;margin:0 0 8px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  input,button,select{background:var(--card2);color:var(--txt);border:1px solid var(--line);
+        border-radius:8px;padding:7px 10px;font-size:13px}
+  input[type=text]{min-width:340px}
+  button{cursor:pointer}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  button:hover{filter:brightness(1.1)}
+  .mut{color:var(--mut);font-size:12px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .chip{font-size:11px;padding:3px 8px;border-radius:20px;border:1px solid var(--line);background:var(--card)}
+  .chip.on{color:var(--ok);border-color:#2c5c40}
+  .chip.off{color:var(--mut)}
+  main{padding:16px;max-width:1500px;margin:0 auto}
+  .group{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:18px;overflow:hidden}
+  .ghead{padding:10px 14px;border-bottom:1px solid var(--line);background:var(--card2)}
+  .ghead .pos{font-size:12px;color:var(--mut);word-break:break-all;max-height:3.2em;overflow:hidden}
+  .ghead .meta{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;margin-top:4px}
+  .tag{background:#2a3145;padding:2px 7px;border-radius:6px;color:#c7d2fe}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;padding:12px}
+  .icard{background:var(--card2);border:2px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer;
+         position:relative;transition:.12s}
+  .icard:hover{border-color:var(--acc)}
+  .icard.sel{border-color:var(--gold);box-shadow:0 0 0 2px #ffcf5b44}
+  .icard img{width:100%;display:block;aspect-ratio:2/3;object-fit:cover;background:#000}
+  .badge{position:absolute;top:6px;right:6px;background:#000b;color:#fff;font-size:12px;font-weight:600;
+         padding:2px 7px;border-radius:6px}
+  .rec{position:absolute;top:6px;left:6px;background:var(--gold);color:#222;font-size:11px;font-weight:700;
+       padding:2px 7px;border-radius:6px}
+  .ibody{padding:8px 9px}
+  .subs{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+  .sub{font-size:10.5px;color:var(--mut);background:#1a1e29;padding:2px 6px;border-radius:5px}
+  .flags{margin-top:5px;display:flex;flex-wrap:wrap;gap:4px}
+  .flag{font-size:10.5px;color:var(--bad);background:#3a2028;padding:2px 6px;border-radius:5px}
+  .fname{font-size:11px;color:var(--mut);word-break:break-all}
+  .bar{height:5px;border-radius:3px;background:#2a3145;margin-top:6px;overflow:hidden}
+  .bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--ok))}
+  .empty{padding:40px;text-align:center;color:var(--mut)}
+  .icard.blank{border:2px dashed var(--line);display:flex;align-items:center;justify-content:center;
+         min-height:200px;background:transparent;flex-direction:column;gap:8px}
+  .icard.blank:hover{border-color:var(--bad)}
+  .icard.blank.sel{border-color:var(--bad);box-shadow:0 0 0 2px #ff6b6b44}
+  .icard.blank .blank-icon{font-size:36px;opacity:.4}
+  .icard.blank .blank-text{font-size:13px;color:var(--mut)}
+  .lightbox{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:50;flex-direction:column}
+  .lightbox.on{display:flex}
+  .lightbox img{max-width:92vw;max-height:82vh;border-radius:8px;user-select:none}
+  .lightbox .cap{color:#ccc;font-size:12px;margin-top:10px;max-width:90vw;text-align:center}
+  .lb-nav{position:absolute;top:50%;transform:translateY(-50%);background:#0008;color:#fff;border:1px solid #fff3;
+         border-radius:50%;width:48px;height:48px;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+         transition:.15s;user-select:none}
+  .lb-nav:hover{background:#000c;border-color:#fff6}
+  .lb-nav.prev{left:20px}
+  .lb-nav.next{right:20px}
+  .lb-actions{display:flex;gap:10px;margin-top:12px}
+  .lb-actions button{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:8px 20px;font-size:14px;cursor:pointer}
+  .lb-actions button:hover{filter:brightness(1.15)}
+  .lb-actions .lb-counter{color:#999;font-size:13px;display:flex;align-items:center}
+  .err{color:var(--bad);font-size:12px;margin-top:6px}
+  .grow{flex:1}
+</style>
+</head>
+<body>
+<header>
+  <h1>🖼️ Anime Image Curator · 动漫图筛 <span class="mut" id="rootinfo"></span></h1>
+  <div class="row">
+    <input id="folder" type="text" placeholder="图片文件夹绝对路径，例如 D:\imgs\velina"/>
+    <label class="mut"><input id="recursive" type="checkbox" checked style="min-width:auto"/> 含子目录</label>
+    <button class="primary" id="scanbtn" onclick="doScan()">扫描 Scan</button>
+    <span class="grow"></span>
+    <button onclick="exportJSON()">导出精选(JSON)</button>
+    <input id="dest" type="text" placeholder="拷贝精选到目录(可选)" style="min-width:220px"/>
+    <button onclick="exportCopy()">拷贝精选</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <span class="mut">美观度模型:</span>
+    <select id="aemodel" onchange="onAeChange()" style="min-width:260px"></select>
+    <span class="mut" id="aedesc"></span>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="err" id="err"></div>
+</header>
+<main>
+  <div class="empty" id="empty">输入图片文件夹路径并点击「扫描」。同一段 prompt 的图会自动归为一组，每组推荐综合分最高的一张。</div>
+  <div id="groups"></div>
+</main>
+
+<div class="lightbox" id="lb" onclick="lbBackdropClick(event)">
+  <button class="lb-nav prev" onclick="lbNav(-1);event.stopPropagation()" title="上一张 (←)">◀</button>
+  <img id="lbimg"/><div class="cap" id="lbcap"></div>
+  <div class="lb-actions">
+    <button onclick="lbSelect();event.stopPropagation()">✔ 选择它 (Enter)</button>
+    <span class="lb-counter" id="lbcounter"></span>
+  </div>
+  <button class="lb-nav next" onclick="lbNav(1);event.stopPropagation()" title="下一张 (→)">▶</button>
+</div>
+
+<script>
+let STATE=null;
+const $=id=>document.getElementById(id);
+const SCORE_LABEL={quality:"质检",aesthetic:"美观",tagger_fidelity:"还原",vlm_judge:"VLM"};
+
+async function loadStatus(){
+  const s=await (await fetch("/api/status")).json();
+  if(s.root) $("rootinfo").textContent="· "+s.root;
+  const chips=s.scorers.map(x=>{
+    const t=x.available?"启用":"未启用";
+    const title=x.available?"":(x.reason||"");
+    return `<span class="chip ${x.available?'on':'off'}" title="${title}">${x.label} · ${t}</span>`;
+  }).join("");
+  const hint=s.scorers.some(x=>!x.available)?
+    ' <span class="mut">提示：未启用的打分项可用 uv sync --extra aesthetic / vlm 开启</span>':"";
+  $("chips").innerHTML=chips+hint;
+  renderAeSelect(s.aesthetic_backends||[]);
+}
+
+function renderAeSelect(backends){
+  const sel=$("aemodel"); if(!sel) return;
+  sel.innerHTML=backends.map(b=>{
+    const dis=b.available?"":"disabled";
+    const tag=b.available?b.domain:"未安装";
+    return `<option value="${b.id}" ${b.active?'selected':''} ${dis}>${b.label} · ${tag} · ${b.approx_size}</option>`;
+  }).join("");
+  updateAeDesc(backends);
+  sel._backends=backends;
+}
+
+function updateAeDesc(backends){
+  const sel=$("aemodel"); const id=sel.value;
+  const b=(backends||sel._backends||[]).find(x=>x.id===id);
+  $("aedesc").textContent=b?(b.available?b.desc:("未安装："+(b.reason||""))):"";
+}
+
+async function onAeChange(){
+  const id=$("aemodel").value; updateAeDesc();
+  const had=STATE&&STATE.groups&&STATE.groups.length;
+  const r=await fetch("/api/set_aesthetic",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({backend:id})});
+  const j=await r.json();
+  if(!r.ok){alert("切换失败："+(j.detail||""));return;}
+  $("err").textContent="";
+  if(had&&j.needs_rescan){
+    $("err").textContent="已切换到新模型，正在用新模型重新打分…";
+    await doScan();
+    $("err").textContent="";
+  }
+}
+
+async function doScan(){
+  const folder=$("folder").value.trim();
+  if(!folder){alert("请填写文件夹路径");return;}
+  $("err").textContent=""; $("scanbtn").textContent="扫描中…"; $("scanbtn").disabled=true;
+  try{
+    const r=await fetch("/api/scan",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({folder,recursive:$("recursive").checked})});
+    const j=await r.json();
+    if(!r.ok){throw new Error(j.detail||"扫描失败");}
+    await loadState();
+    if(j.errors&&j.errors.length){$("err").textContent="部分文件出错："+j.errors.slice(0,5).join(" | ");}
+  }catch(e){$("err").textContent=String(e.message||e);}
+  finally{$("scanbtn").textContent="扫描 Scan";$("scanbtn").disabled=false;}
+}
+
+async function loadState(){
+  STATE=await (await fetch("/api/state")).json();
+  render();
+}
+
+function render(){
+  $("empty").style.display="none";
+  const g=$("groups"); g.innerHTML="";
+  if(!STATE||!STATE.groups.length){g.innerHTML='<div class="empty">没有找到带 prompt 的图片。</div>';return;}
+  STATE.groups.forEach((grp,gi)=>{
+    const pos=(grp.positive||"(无 prompt)");
+    const el=document.createElement("div"); el.className="group";
+    const chars=grp.character_id?`<span class="tag">角色: ${grp.character_id}</span>`:"";
+    el.innerHTML=`<div class="ghead">
+      <div class="meta">${chars}<span class="tag">${grp.members.length} 张</span>
+        <span class="mut">组 #${gi+1}</span></div>
+      <div class="pos">${escapeHtml(pos)}</div>
+    </div><div class="cards"></div>`;
+    const cards=el.querySelector(".cards");
+    grp.members.forEach((m,idx)=>{
+      const sel=(grp.selected===m.filename);
+      const rec=(grp.recommended===m.filename);
+      const c=document.createElement("div"); c.className="icard"+(sel?" sel":"");
+      const subs=Object.entries(m.scores||{}).map(([k,v])=>
+        `<span class="sub">${SCORE_LABEL[k]||k} ${pct(v.score)}</span>`).join("");
+      const flags=[];
+      Object.values(m.scores||{}).forEach(v=>(v.flags||[]).forEach(f=>flags.push(f)));
+      if(m.outfit && m.outfit_ratio<0.6) flags.push(`服装tag匹配低(${pct(m.outfit_ratio)})`);
+      const flagHtml=flags.map(f=>`<span class="flag">${escapeHtml(f)}</span>`).join("");
+      const out=m.outfit?`<span class="sub">服装:${escapeHtml(m.outfit)} ${pct(m.outfit_ratio)}</span>`:"";
+      c.innerHTML=`${rec?'<span class="rec">推荐</span>':''}
+        <span class="badge">${pct(m.composite)}</span>
+        <img loading="lazy" src="/api/thumb?size=512&path=${encodeURIComponent(m.path)}"
+             onclick="event.stopPropagation();showFull(${gi},${idx})"/>
+        <div class="ibody">
+          <div class="fname">${escapeHtml(m.filename)}</div>
+          <div class="bar"><i style="width:${Math.round(m.composite*100)}%"></i></div>
+          <div class="subs">${subs}${out}</div>
+          <div class="flags">${flagHtml}</div>
+        </div>`;
+      c.onclick=()=>selectImg(grp.key,m.filename,c);
+      cards.appendChild(c);
+    });
+    // 空白卡片：选中后该组不选任何图
+    const isBlank=(grp.selected===null);
+    const blank=document.createElement("div");
+    blank.className="icard blank"+(isBlank?" sel":"");
+    blank.innerHTML=`<span class="blank-icon">⊘</span><span class="blank-text">全部不选</span>`;
+    blank.onclick=()=>selectImg(grp.key,null,blank);
+    cards.appendChild(blank);
+    g.appendChild(el);
+  });
+}
+
+async function selectImg(key,filename,cardEl){
+  await fetch("/api/select",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({key,filename})});
+  cardEl.parentElement.querySelectorAll(".icard").forEach(x=>x.classList.remove("sel"));
+  cardEl.classList.add("sel");
+  // sync STATE so blank card / lightbox stay consistent
+  if(STATE){
+    const grp=STATE.groups.find(g=>g.key===key);
+    if(grp) grp.selected=filename;
+  }
+}
+
+/* ---- Lightbox with group navigation ---- */
+let LB={gi:-1,idx:-1};
+
+function showFull(gi,idx){
+  LB={gi,idx};
+  _lbRender();
+  $("lb").classList.add("on");
+}
+
+function _lbRender(){
+  if(!STATE||LB.gi<0) return;
+  const grp=STATE.groups[LB.gi];
+  if(!grp||!grp.members.length) return;
+  const m=grp.members[LB.idx];
+  $("lbimg").src="/api/image?path="+encodeURIComponent(m.path);
+  $("lbcap").textContent=`${m.filename} · 综合 ${pct(m.composite)}`;
+  $("lbcounter").textContent=`组${LB.gi+1}/${STATE.groups.length} · ${LB.idx+1}/${grp.members.length}`;
+  $("lbcap").textContent=`${m.filename} · 综合 ${pct(m.composite)}`;
+}
+
+function lbNav(dir){
+  if(!STATE||LB.gi<0) return;
+  const grp=STATE.groups[LB.gi];
+  if(!grp) return;
+  const n=grp.members.length;
+  LB.idx=((LB.idx+dir)%n+n)%n;
+  _lbRender();
+}
+
+function lbNavGroup(dir){
+  if(!STATE||LB.gi<0) return;
+  const total=STATE.groups.length;
+  LB.gi=((LB.gi+dir)%total+total)%total;
+  LB.idx=0;
+  _lbRender();
+}
+
+function lbSelect(){
+  if(!STATE||LB.gi<0) return;
+  const grp=STATE.groups[LB.gi];
+  if(!grp) return;
+  const m=grp.members[LB.idx];
+  // trigger selection via the card element
+  const cards=document.querySelectorAll(".group")[LB.gi]?.querySelectorAll(".icard:not(.blank)");
+  if(cards&&cards[LB.idx]) selectImg(grp.key,m.filename,cards[LB.idx]);
+}
+
+function lbBackdropClick(e){
+  if(e.target===$("lb")) $("lb").classList.remove("on");
+}
+
+/* Keyboard: arrows + Enter while lightbox is open */
+document.addEventListener("keydown",e=>{
+  if(!$("lb").classList.contains("on")) return;
+  if(e.key==="ArrowLeft"){lbNav(-1);e.preventDefault();}
+  else if(e.key==="ArrowRight"){lbNav(1);e.preventDefault();}
+  else if(e.key==="ArrowUp"){lbNavGroup(-1);e.preventDefault();}
+  else if(e.key==="ArrowDown"){lbNavGroup(1);e.preventDefault();}
+  else if(e.key==="Enter"){lbSelect();e.preventDefault();}
+  else if(e.key==="Escape"){ $("lb").classList.remove("on");e.preventDefault();}
+});
+
+async function exportJSON(){
+  const j=await (await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({mode:"json"})})).json();
+  const blob=new Blob([JSON.stringify(j.selected,null,2)],{type:"application/json"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+  a.download="curator-selected.json";a.click();
+}
+async function exportCopy(){
+  const dest=$("dest").value.trim();
+  if(!dest){alert("请填写目标目录");return;}
+  const r=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({mode:"copy",dest})});
+  const j=await r.json();
+  if(!r.ok){alert(j.detail||"拷贝失败");return;}
+  alert("已拷贝 "+j.copied.length+" 张到:\n"+dest);
+}
+
+const pct=x=>(x==null?"-":Math.round(x*100));
+function escapeHtml(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+function escapeAttr(s){return (s||"").replace(/'/g,"\\'");}
+
+loadStatus().then(()=>fetch("/api/state").then(r=>r.json()).then(s=>{if(s&&s.root){$("folder").value=s.root;} if(s&&s.groups&&s.groups.length){STATE=s;render();}}));
+</script>
+</body>
+</html>

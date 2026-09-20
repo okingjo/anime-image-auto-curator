@@ -1,0 +1,41 @@
+[project]
+name = "anime-image-curator"
+version = "0.1.0"
+description = "Local anime-image QA + per-prompt best-pick curator with a WebUI. No cloud."
+readme = "README.md"
+requires-python = ">=3.10"
+# 基础依赖：WebUI + 元数据解析 + 分组 + 轻量质检。装完即可启动（秒开，无大模型下载）。
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pillow",
+    "pyyaml",
+    "numpy",
+]
+
+[project.optional-dependencies]
+# 美观度打分。可切换多个模型（见 config/curator.yaml 的 aesthetic_model，或 WebUI 下拉框）。
+# 首次使用某个模型时按需下载。作为"结构合理性 + 选优"的参考分。
+# torch 默认装 PyPI 版；有 NVIDIA 卡想要 GPU 加速用 run.bat --gpu（会改装 CUDA 版 torch）。
+aesthetic = [
+    "torch",
+    "open-clip-torch",            # improved-clip backend
+    "transformers",               # shadow-v2 backend (ViTForImageClassification)
+    "aesthetic-predictor-v2-5",   # aesthetic-predictor-v2-5 backend (SigLIP)
+    "onnxruntime",                # skytnt-anime backend (ONNX)
+    "huggingface_hub",            # model downloads
+]
+# 本地 VLM 结构/手部判定（Phase 3）。
+vlm = [
+    "torch",
+    "transformers",
+    "accelerate",
+    "bitsandbytes",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[tool.uv]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"

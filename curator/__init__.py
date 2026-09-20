@@ -1,0 +1,1 @@
+"""Anime Image Curator package."""

@@ -1,0 +1,24 @@
+# 打分配置。复制为 config/curator.yaml 后修改。
+#
+# weights: 各打分项权重。未安装/不可用的打分项会自动忽略并在已启用项间归一化。
+#   quality          轻量质检（空白/退化图检测）。动漫图很少糊/过曝，故权重低。
+#   aesthetic        美观度（兼作结构合理性参考）。模型可切换，见 aesthetic_model。
+#   vlm_judge        本地 VLM → 手部/肢体/服装结构判定（Phase 3）。
+#
+# aesthetic_model: 选哪个美观度模型（可选值见 README）。
+#   improved-clip          当前默认，CLIP ViT-L/14 + improved-aesthetic-predictor（照片/AI图训练，动漫一般）
+#   aesthetic-predictor-v2-5  SigLIP，明确支持插画，社区最流行
+#   skytnt-anime           ONNX，danbooru 训练，动漫专用、轻快
+#   aesthetic-shadow-v2    1.1B ViT，动漫专用、质量高、较重
+#
+# characters_file: 角色配置文件路径（相对项目根）。
+
+characters_file: config/characters.yaml
+recursive: true
+thumbs_size: 512
+aesthetic_model: shadow-v2
+
+weights:
+  quality: 0.8
+  aesthetic: 0.2
+  vlm_judge: 0.0
