@@ -64,7 +64,7 @@ def _hf_download(repo_id: str, filename: str) -> str:
     from huggingface_hub import hf_hub_download
 
     def _do():
-        return hf_hub_download(repo_id, filename)
+        return hf_hub_download(repo_id, filename, cache_dir=_CACHE)
 
     return _load_with_endpoint_fallback(_do, f"download {filename}")
 
@@ -103,13 +103,14 @@ def _download_repo_files(repo_id: str, filenames: list, label: str) -> Path:
     from huggingface_hub import hf_hub_download, try_to_load_from_cache
 
     _ensure_endpoint()  # 保证 HF_ENDPOINT 指向可用镜像
+    _HF_CACHE.mkdir(parents=True, exist_ok=True)
     local_dir = _CACHE / "hub-local" / repo_id.replace("/", "--")
     snapshot_dir: Optional[Path] = None
     failed = []
 
     for fn in filenames:
         # 1) 缓存命中
-        cached = try_to_load_from_cache(repo_id, fn)
+        cached = try_to_load_from_cache(repo_id, fn, cache_dir=_HF_CACHE)
         if isinstance(cached, str) and os.path.exists(cached) and os.path.getsize(cached) > 0:
             snapshot_dir = snapshot_dir or Path(cached).parent
             continue
@@ -119,7 +120,7 @@ def _download_repo_files(repo_id: str, filenames: list, label: str) -> Path:
         for ep in _HF_ENDPOINTS:
             for attempt in range(2):
                 try:
-                    p = hf_hub_download(repo_id, fn, endpoint=ep)
+                    p = hf_hub_download(repo_id, fn, endpoint=ep, cache_dir=_HF_CACHE)
                     snapshot_dir = snapshot_dir or Path(p).parent
                     got = p
                     break
@@ -256,7 +257,11 @@ class ImprovedClipBackend(AestheticBackend):
         self._device = _device()
 
         def _do():
-            return open_clip.create_model_and_transforms("ViT-L-14", pretrained="openai")
+            cache_dir = _CACHE / "openclip"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            return open_clip.create_model_and_transforms(
+                "ViT-L-14", pretrained="openai", cache_dir=cache_dir
+            )
 
         model, _, preprocess = _load_with_endpoint_fallback(_do, "improved-clip")
         model.to(self._device).eval()
