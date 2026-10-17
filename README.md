@@ -9,7 +9,7 @@
 
 1. 自动读取每张图里嵌入的 prompt（支持 SD-webui / ComfyUI，PNG 和 JPEG 都能读）；
 2. 按 prompt 自动分组（同一段 prompt 的 4 张归一组）；
-3. 给每张图打分（**质检 80% + 美观度 20%**，权重可调），组内排序；
+3. 给每张图打分（**质检 80% + 美观度 20% + 结构 5%**，权重可调），组内排序；糊图/过曝图额外硬降权；
 4. 每组把「最优候选」顶到最前，你在 WebUI 里一眼扫、点选确认（也可以点「全部不选」跳过该组）；
 5. 导出精选清单，或把每组精选直接拷贝到一个目录。
 
@@ -22,7 +22,7 @@
 |---|---|---|---|
 | **基础**（默认） | 读 prompt、分组、角色识别、轻量质检、WebUI、选优、导出 | 仅 fastapi/pillow 等 | 秒开，无大模型下载 |
 | **+aesthetic** | 美观度打分（兼作结构合理性参考），**多模型可切换** | `--extra aesthetic` | 见下表，首次使用按需下载 |
-| **+structure** | **结构打分（影子模式）**：DWPose 骨架/手部几何检查 + 可选 YOLO 部位板块 | `--extra structure`（YOLO 另需 `--extra yolo`） | 详见 docs/STRUCTURE_SCORER.md |
+| **+structure** | **结构打分（已转正，低权重参与排序）**：DWPose 骨架/手部几何检查 + 可选 YOLO 部位板块 | `--extra structure`（YOLO 另需 `--extra yolo`） | 详见 docs/STRUCTURE_SCORER.md |
 | **+vlm** | 本地视觉语言模型 → 手部/肢体/服装结构判定（Phase 3） | `--extra vlm` | 7B 级 VLM，24G 显存轻松跑 |
 
 ## 美观度模型（WebUI 顶部下拉框可切换，切换后自动用新模型重打分）
@@ -79,9 +79,10 @@ uv sync --extra vlm
 
 - `config/characters.example.yaml` — 角色 + 多套服装定义（名字 tag、LoRA、各服装 tag 集）。
   复制为 `config/characters.yaml` 后按需修改。每个角色可定义**多套官方皮肤/服装**，其中一套标 `default: true`。
-- `config/curator.example.yaml` — 各打分项权重（默认质检 0.8、美观度 0.2）、缩略图尺寸等。复制为 `config/curator.yaml` 生效。
+- `config/curator.example.yaml` — 各打分项权重（默认质检 0.8、美观度 0.2、结构 0.05）、
+  质检 flag 惩罚（quality_flag_penalty）、组级弃选提示阈值（suspect）、缩略图尺寸等。复制为 `config/curator.yaml` 生效。
 
-## 结构打分（影子模式，需 `uv sync --extra structure`）
+## 结构打分（已转正，需 `uv sync --extra structure`）
 
 基于 **DWPose 133 关键点**（身体+脸+双手，onnxruntime，无 torch）的几何规则检查：
 手指长度顺序/指节比例/指尖聚集/关节反折、左右肢体不对称、关节融合等。
@@ -89,13 +90,15 @@ uv sync --extra vlm
 
 核心原则：**检出不到 = N/A 不扣分**（手放背后检不出手，不代表手有问题）；只对可见部位做几何检查。
 
-- **影子模式（默认）**：结构分只在 UI 展示（卡片紫色 chip + Lightbox 骨架叠加，O 键）并随导出记录，**不影响排序**；用真实数据校准阈值后再转正加权。
+- **2026-10 已转正**：依据 66 次导出会话 / 2173 组 / 8934 张图的反馈数据校准（structure 影子分与被选图
+  Mann-Whitney z=4.69，组内 pairwise 胜率 57.5%），现以 `weights.structure: 0.05` 低权重参与排序。
+  统计依据与方法见 **`docs/CALIBRATION_2026-10.md`**；`structure.shadow: true` 可退回纯影子模式。
 - 配置见 `config/curator.example.yaml` 的 `structure:` 段；设计详见 `docs/STRUCTURE_SCORER.md`。
 - YOLO 板块需 `uv sync --extra yolo`（引入 ultralytics/torch），并在 `structure.yolo.models` 配置。
 
 ## 反馈数据采集（校准结构打分的弹药）
 
-导出区新增 **「记录本次导出」** 勾选框：勾选后每次导出（JSON/拷贝）都会把本次全部选择 + 所有打分特征追加到 `data/feedback/feedback-YYYY-MM-DD.jsonl`。数据格式规格见 **`docs/FEEDBACK_FORMAT.md`**（含样本定义、N/A 语义、阈值校准与影子分转正的统计标准）。积累一段时间后把该目录交给分析（人或 AI）即可校准权重。
+导出区新增 **「记录本次导出」** 勾选框：勾选后每次导出（JSON/拷贝）都会把本次全部选择 + 所有打分特征追加到 `data/feedback/feedback-YYYY-MM-DD.jsonl`。数据格式规格见 **`docs/FEEDBACK_FORMAT.md`**（含样本定义、N/A 语义、阈值校准与影子分转正的统计标准）。积累一段时间后把该目录交给分析（人或 AI）即可校准权重——首批校准（2026-10，structure 转正 + 质检惩罚 + 弃选提示）的过程与结论见 **`docs/CALIBRATION_2026-10.md`**。
 
 ## 元数据格式（已实测）
 

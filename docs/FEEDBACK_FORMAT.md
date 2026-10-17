@@ -24,16 +24,17 @@ data/feedback/feedback-YYYY-MM-DD.jsonl    （按天一个文件，UTF-8，每�
 - 一次导出 = 一行 JSONL = 一次完整会话快照（含所有组、所有图、所有分）。
 - 未勾选导出不产生任何记录。
 
-## 顶层结构（schema: `aic.feedback.v1`）
+## 顶层结构（schema: `aic.feedback.v1` / `aic.feedback.v1.1`）
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `schema` | str | 固定 `"aic.feedback.v1"`，格式变更必须升级 |
+| `schema` | str | `"aic.feedback.v1"`；v1.1 起新增字段见下，格式再变更必须升版本 |
 | `session_id` | str | 本次进程会话的 12 位随机 id（同一会话多次导出可关联） |
 | `ts` | str | ISO-8601 带时区，导出时刻 |
 | `mode` | str | `"json"` \| `"copy"`，本次导出方式 |
 | `root` | str | 扫描的图片根目录 |
-| `weights` | dict | 当时的综合分权重（quality/aesthetic/...） |
+| `weights` | dict | 当时的综合分权重（quality/aesthetic/structure/...） |
+| `quality_flag_penalty` | float | v1.1 新增：当时生效的质检 flag 平坦惩罚（0=关闭） |
 | `aesthetic_backend` | str\|null | 当时激活的美观度模型 id（shadow-v2 等） |
 | `structure_cfg` | dict\|null | 当时的 structure 完整配置（shadow/parts/pose/yolo，含各 YOLO 模型的 source） |
 | `scorers` | list | 各打分器 `{name, available, shadow}` |
@@ -49,6 +50,7 @@ data/feedback/feedback-YYYY-MM-DD.jsonl    （按天一个文件，UTF-8，每�
 | `character_id` | str\|null | 识别到的角色 |
 | `positive` | str | 正面 prompt（截断到 2000 字符） |
 | `recommended` | str\|null | 系统推荐（综合分最高）的文件名 |
+| `suspect` | str\|null | v1.1 新增：组级「疑似整组弃选」提示文案（null=无提示）。分析时可作为弃选预测的校准标签 |
 | `selected` | str\|null | **用户最终选择**；`null` = 用户点了「全部不选」（这是重要信号：整组质量都不行） |
 | `members` | list | 组内每张图的完整记录，见下 |
 
@@ -138,3 +140,5 @@ data/feedback/feedback-YYYY-MM-DD.jsonl    （按天一个文件，UTF-8，每�
 ## 历史版本
 
 - `aic.feedback.v1`（2026-09）：初版。structure 影子分 + DWPose 特征 + YOLO 板块。
+- `aic.feedback.v1.1`（2026-10）：新增顶层 `quality_flag_penalty`、group 级 `suspect`
+  （组平均 sharpness < 0.45 的「疑似整组弃选」提示）。校准分析见 `docs/CALIBRATION_2026-10.md`。

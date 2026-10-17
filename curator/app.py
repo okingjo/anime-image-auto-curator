@@ -66,6 +66,7 @@ def status():
         "root": curator.root,
         "scorers": [
             {"name": s.name, "label": s.label, "available": s.available,
+             "shadow": bool(getattr(s, "shadow", False)),
              "reason": getattr(s, "reason", "")}
             for s in curator.scorers.values()
         ],

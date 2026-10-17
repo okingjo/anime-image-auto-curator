@@ -19,9 +19,10 @@ Overall structure score = weighted average of AVAILABLE parts only.
 If nothing is available -> score() returns None and the pipeline skips this
 scorer entirely (composite renormalizes over the remaining scorers).
 
-SHADOW MODE (structure.shadow=true, default): the pipeline records the score
-+ flags for display and feedback collection, but EXCLUDES it from the
-composite until thresholds are calibrated on real user data.
+SHADOW MODE (structure.shadow=true): the pipeline records the score + flags
+for display and feedback collection, but EXCLUDES it from the composite.
+Calibrated on the first feedback batch (2026-10, see docs/CALIBRATION_2026-10.md):
+now graduated to a low weight (weights.structure=0.05, shadow=false by default).
 
 All numeric features are persisted in `subs.feats` so the feedback JSONL
 (docs/FEEDBACK_FORMAT.md) contains a complete feature row per image.

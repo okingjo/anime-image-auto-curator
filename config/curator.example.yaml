@@ -21,12 +21,24 @@ aesthetic_model: shadow-v2
 weights:
   quality: 0.8
   aesthetic: 0.2
+  structure: 0.05          # 2026-10 校准转正（影子模式毕业，见 docs/CALIBRATION_2026-10.md）
   vlm_judge: 0.0
 
+# 质检 flag（偏糊/过曝/纯色）额外惩罚：带 flag 的成员综合分直接减去该值。
+# 2026-10 校准：用户几乎不选带质检 flag 的图（被选率 1.5% vs 未选 1.7% vs
+# 整组弃选 5.2%），原始扣分量不足以把它压下去，需要额外硬性降权。
+quality_flag_penalty: 0.25
+
+# 组级“疑似整组弃选”提示（仅 UI 提示，不影响排序/选择）。
+# 2026-10 校准：组平均 sharpness < 0.45 可捕获 65% 的整组弃选，
+# 误报率 23%（基线 16%，2.2x lift）。设 0 关闭。
+suspect:
+  mean_sharpness_below: 0.45
+
 # ---------------------------------------------------------------------------
-# 结构打分（影子模式先行）：DWPose 骨架/手部几何 + 可选 YOLO 部位检测板块。
-# shadow:true 时，结构分只展示与记录（写入 data/feedback/），不进入综合排序；
-# 用一段时间、积累足够反馈后再把 structure 加入 weights 并关掉 shadow。
+# 结构打分：DWPose 骨架/手部几何 + 可选 YOLO 部位检测板块。
+# 2026-10 已依据 ~9k 条反馈转正（shadow:false + weights.structure=0.05），
+# 依据与统计见 docs/CALIBRATION_2026-10.md。shadow:true 可退回纯影子模式。
 #
 # parts：body/hands/yolo 三个子分的内部权重（仅对“可见”部分归一化）。
 # pose ：DWPose 配置。det_conf=人体检测阈值；hand_vis=手部关键点可见阈值；
@@ -37,7 +49,7 @@ weights:
 #        例：手/脚/脸各一个模型（需先 uv sync --extra yolo）。
 # ---------------------------------------------------------------------------
 structure:
-  shadow: true
+  shadow: false
   parts:
     body: 0.35
     hands: 0.35

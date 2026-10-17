@@ -62,6 +62,12 @@ class Curator:
         self.weights = self.config.get("weights", {})
         self.recursive = bool(self.config.get("recursive", True))
         self.thumbs_size = int(self.config.get("thumbs_size", 512))
+        # calibrated 2026-10 (see docs/CALIBRATION_2026-10.md):
+        # flat penalty for quality-flagged members (blur/exposure) + group-level
+        # "suspect" hint when the whole group is soft (user rejects those often).
+        self.quality_flag_penalty = float(self.config.get("quality_flag_penalty", 0.0))
+        sus = self.config.get("suspect") or {}
+        self.suspect_sharp = float(sus.get("mean_sharpness_below", 0.0)) or None
         # select aesthetic backend from config (default shadow-v2)
         aes = self.scorers.get("aesthetic")
         want = self.config.get("aesthetic_model")
@@ -91,12 +97,15 @@ class Curator:
                 try:
                     data = yaml.safe_load(Path(c).read_text(encoding="utf-8")) or {}
                     data.setdefault("characters_file", "config/characters.example.yaml")
-                    data.setdefault("weights", {"quality": 0.8, "aesthetic": 0.2})
+                    data.setdefault("weights", {"quality": 0.8, "aesthetic": 0.2,
+                                                "structure": 0.05})
                     return data
                 except Exception:
                     continue
         return {"characters_file": "config/characters.example.yaml",
-                "weights": {"quality": 0.8, "aesthetic": 0.2},
+                "weights": {"quality": 0.8, "aesthetic": 0.2, "structure": 0.05},
+                "quality_flag_penalty": 0.25,
+                "suspect": {"mean_sharpness_below": 0.45},
                 "recursive": True, "thumbs_size": 512}
 
     # ------------------------------------------------------------------ #
@@ -174,11 +183,35 @@ class Curator:
             })
             g["members"].append(record)
 
-        # rank within groups + recommend best
+        # rank within groups + recommend best + group-level suspect hint
         for g in self.groups.values():
             g["members"].sort(key=lambda r: r.composite, reverse=True)
             g["recommended"] = g["members"][0].filename if g["members"] else None
+            g["suspect"] = self._group_suspect(g)
         return self.summary()
+
+    def _group_suspect(self, g) -> Optional[str]:
+        """Group-level 'probably reject' hint (calibrated 2026-10).
+
+        Feedback analysis: ~16% of groups are rejected entirely ('全部不选');
+        group mean sharpness < 0.45 catches ~65% of those rejections at a
+        ~23% false-alarm rate (2.2x lift over baseline). This is a HINT for
+        the UI only — it never changes ranking or selection.
+        """
+        if not self.suspect_sharp:
+            return None
+        sharps = []
+        for m in g["members"]:
+            q = m.scores.get("quality") or {}
+            v = (q.get("subs") or {}).get("sharpness")
+            if isinstance(v, (int, float)):
+                sharps.append(float(v))
+        if not sharps:
+            return None
+        mean_sharp = sum(sharps) / len(sharps)
+        if mean_sharp < self.suspect_sharp:
+            return f"整组偏软（平均清晰度 {mean_sharp:.2f} < {self.suspect_sharp:g}），历史上此类组常被整组弃选"
+        return None
 
     def _build_record(self, f: Path, meta: ImageMeta, active) -> ImageRecord:
         rec = ImageRecord(
@@ -220,6 +253,12 @@ class Curator:
         if img is not None:
             img.close()
         rec.composite = (weighted_sum / weight_total) if weight_total > 0 else 0.0
+        # calibrated penalty (2026-10): members carrying quality flags (偏糊/过曝等)
+        # are rejected by the user far more often than their raw score suggests.
+        if self.quality_flag_penalty > 0:
+            q = rec.scores.get("quality") or {}
+            if q.get("flags"):
+                rec.composite = max(0.0, rec.composite - self.quality_flag_penalty)
         return rec
 
     # ------------------------------------------------------------------ #
@@ -234,6 +273,7 @@ class Curator:
     def state(self):
         scorers_info = [
             {"name": s.name, "label": s.label, "available": s.available,
+             "shadow": bool(getattr(s, "shadow", False)),
              "reason": getattr(s, "reason", "")}
             for s in self.scorers.values()
         ]
@@ -245,6 +285,7 @@ class Curator:
                 "negative": g["negative"],
                 "character_id": g["character_id"],
                 "recommended": g.get("recommended"),
+                "suspect": g.get("suspect"),
                 "selected": self.selections.get(g["key"], g.get("recommended")),
                 "members": [m.to_dict() for m in g["members"]],
             }
@@ -253,6 +294,7 @@ class Curator:
             "root": self.root,
             "scorers": scorers_info,
             "weights": self.weights,
+            "quality_flag_penalty": self.quality_flag_penalty,
             "characters": list(self.characters.keys()),
             "groups": groups,
         }
@@ -300,12 +342,13 @@ class Curator:
 
         st = self.scorers.get("structure")
         record = {
-            "schema": "aic.feedback.v1",
+            "schema": "aic.feedback.v1.1",
             "session_id": _uuid.uuid4().hex[:12],
             "ts": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
             "mode": mode,
             "root": self.root,
             "weights": self.weights,
+            "quality_flag_penalty": self.quality_flag_penalty,
             "aesthetic_backend": None,
             "structure_cfg": None,
             "scorers": [{"name": s.name, "available": s.available,
@@ -326,6 +369,7 @@ class Curator:
                 "character_id": g["character_id"],
                 "positive": g["positive"][:2000],
                 "recommended": g.get("recommended"),
+                "suspect": g.get("suspect"),
                 "selected": self.selections.get(g["key"], g.get("recommended")),
                 "members": [m.to_dict() for m in g["members"]],
             })

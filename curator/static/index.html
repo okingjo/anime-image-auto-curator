@@ -31,6 +31,7 @@
   .ghead .pos{font-size:12px;color:var(--mut);word-break:break-all;max-height:3.2em;overflow:hidden}
   .ghead .meta{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;margin-top:4px}
   .tag{background:#2a3145;padding:2px 7px;border-radius:6px;color:#c7d2fe}
+  .tag.suspect{background:#4a2c1a;color:#fbbf77;border:1px solid #7a4a22;cursor:help}
   .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;padding:12px}
   .icard{background:var(--card2);border:2px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer;
          position:relative;transition:.12s}
@@ -137,7 +138,9 @@ async function loadStatus(){
   }).join("");
   const st=s.scorers.find(x=>x.name==="structure");
   if(st&&st.available){
-    $("shadowhint").textContent="结构分为影子模式（仅展示+记录，不影响排序），校准后再启用权重";
+    $("shadowhint").textContent=st.shadow
+      ? "结构分为影子模式（仅展示+记录，不影响排序），校准后再启用权重"
+      : "结构分已转正参与排序（权重见配置 weights.structure）";
   }
   const hint=s.scorers.some(x=>!x.available)?
     ' <span class="mut">提示：未启用的打分项可用 uv sync --extra aesthetic / structure 开启</span>':"";
@@ -210,9 +213,10 @@ function render(){
     const pos=(grp.positive||"(无 prompt)");
     const el=document.createElement("div"); el.className="group"; el.dataset.gi=gi;
     const chars=grp.character_id?`<span class="tag">角色: ${grp.character_id}</span>`:"";
+    const suspect=grp.suspect?`<span class="tag suspect" title="${escapeHtml(grp.suspect)}">⚠ 疑似整组弃选</span>`:"";
     el.innerHTML=`<div class="ghead">
       <div class="meta">${chars}<span class="tag">${grp.members.length} 张</span>
-        <span class="mut">组 #${gi+1}</span></div>
+        ${suspect}<span class="mut">组 #${gi+1}</span></div>
       <div class="pos">${escapeHtml(pos)}</div>
     </div><div class="cards"></div>`;
     const cards=el.querySelector(".cards");
@@ -235,7 +239,8 @@ function render(){
         (vis.yolo_parts||[]).forEach(p=>icons.push(visIcon(p,true)));
         const parts=["body","hands","yolo"].filter(k=>ssub[k]!=null)
           .map(k=>`${({body:"骨",hands:"手",yolo:"Y"})[k]}${pct(ssub[k])}`).join(" ");
-        stHtml=`<span class="sub st-shadow" title="影子模式：仅展示不影响排序">结构 ${pct(st.score)}${parts?" · "+parts:""} ${icons.join("")}</span>`;
+        const stShadow=(STATE.scorers||[]).find(x=>x.name==="structure")?.shadow;
+        stHtml=`<span class="sub st-shadow" title="${stShadow?"影子模式：仅展示不影响排序":"已参与综合排序（低权重）"}">结构 ${pct(st.score)}${parts?" · "+parts:""} ${icons.join("")}</span>`;
       }
       const flags=[];
       Object.entries(m.scores||{}).forEach(([k,v])=>(v.flags||[]).forEach(f=>flags.push(k==="structure"?f:`[${SCORE_LABEL[k]||k}] ${f}`)));

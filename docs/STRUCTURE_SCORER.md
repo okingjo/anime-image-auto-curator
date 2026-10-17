@@ -1,6 +1,6 @@
 # 结构打分方案设计（STRUCTURE_SCORER.md）
 
-> 状态：Phase A 已实现（影子模式）。本文档记录设计决策，供后续迭代参考。
+> 状态：Phase A/B 已完成（2026-10 转正，低权重参与排序）。本文档记录设计决策，供后续迭代参考。
 
 ## 问题
 
@@ -77,19 +77,21 @@ Stage 2 条件  : 只对"在"的部位做几何检查  （规则引擎）
 > min 反映"最差可见实例"。但注意这只是代理信号——真正的手指质量判断仍以
 > DWPose 几何为主。置信度在动漫图上普遍偏低，阈值需要靠影子模式数据校准。
 
-## 汇总与影子模式
+## 汇总与转正（原影子模式）
 
 ```
 structure = Σ(w_part × score_part) / Σ(w_part)   （仅可用部分）
 全部 N/A  → score() 返回 None → pipeline 跳过 → 综合分在剩余打分器间归一化
 ```
 
-**影子模式（shadow: true，默认）**：pipeline 计算并保存 structure 结果（UI 展示 +
-feedback 记录），但**不计入 composite**。原因：v1 阈值全是拍的，直接参与排序会
-误伤；先用真实数据校准（见 docs/FEEDBACK_FORMAT.md 的分析建议），再转正。
+**影子模式（shadow: true）**：pipeline 计算并保存 structure 结果（UI 展示 +
+feedback 记录），但不计入 composite。v1 阈值全是拍的，先影子运行用真实数据校准。
 
-转正时：`config/curator.yaml` 中 `structure.shadow: false` 且
-`weights.structure: 0.2`（起步），相应下调 quality（如 0.6/0.2/0.2）。
+**2026-10 已转正（shadow: false，weights.structure: 0.05）**：首批 66 会话 / 2173 组反馈
+达到 FEEDBACK_FORMAT.md 预设的统计门槛（被选 vs 弃选 Mann-Whitney z=4.69；组内 pairwise
+胜率 57.5%）。离线重放显示权重 0.05 优于文档原建议的 0.2 起步——0.2 会过度惩罚
+「检出了但分低」的手（动漫域置信度天然偏低），0.05 在命中率与推荐图严重结构问题率
+之间最优（−2.2pp）。完整分析见 **docs/CALIBRATION_2026-10.md**。
 
 ## UI 呈现
 
@@ -127,6 +129,6 @@ feedback 记录），但**不计入 composite**。原因：v1 阈值全是拍的
 
 ## 路线图
 
-- [x] Phase A：DWPose + 几何规则 + YOLO 板块 + 影子模式 + feedback 记录（本版）
-- [ ] Phase B：阈值校准（依赖 feedback 数据积累）；structure 转正加权
+- [x] Phase A：DWPose + 几何规则 + YOLO 板块 + 影子模式 + feedback 记录
+- [x] Phase B：阈值校准（2026-10，首批 66 会话反馈；见 docs/CALIBRATION_2026-10.md）；structure 转正加权（0.05）
 - [ ] Phase C：以 feats 训练学习式打分器（LightGBM/小型 MLP）替代手工规则
