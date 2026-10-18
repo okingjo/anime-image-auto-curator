@@ -22,6 +22,9 @@ from typing import Optional
 from PIL import Image
 
 _CACHE = Path(__file__).resolve().parents[2] / ".models"
+# HF hub 下载缓存（项目本地，不写入用户 HF 缓存）。bugfix: 31cec82 引用了
+# _HF_CACHE 但从未定义，导致所有走 _download_repo_files 的后端“加载失败”。
+_HF_CACHE = _CACHE / "hub"
 
 # 国内优先的 HF 下载源。huggingface.co 在境内通常不可达，hf-mirror.com 是社区镜像。
 # 显式多源 + 重试 + 断点续传，避免 transformers 内部单次下载失败后抛出
@@ -109,8 +112,14 @@ def _download_repo_files(repo_id: str, filenames: list, label: str) -> Path:
     failed = []
 
     for fn in filenames:
-        # 1) 缓存命中
+        # 1) 缓存命中（先查项目本地 .models/hub，再回落用户默认 HF 缓存，
+        #    避免旧版本已下好的大模型被重下）
         cached = try_to_load_from_cache(repo_id, fn, cache_dir=_HF_CACHE)
+        if not (isinstance(cached, str) and os.path.exists(cached)):
+            try:
+                cached = try_to_load_from_cache(repo_id, fn)  # 用户默认 HF 缓存
+            except Exception:
+                cached = None
         if isinstance(cached, str) and os.path.exists(cached) and os.path.getsize(cached) > 0:
             snapshot_dir = snapshot_dir or Path(cached).parent
             continue
