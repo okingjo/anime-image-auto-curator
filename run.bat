@@ -38,19 +38,19 @@ for %%a in (%*) do (
 
 if "%SYNC_MODE%"=="base" (
     echo [INFO] 基础模式：同步基础依赖...
-    uv sync
+    uv sync --inexact
 ) else if "%SYNC_MODE%"=="gpu" (
     echo [INFO] GPU 模式：先装 CUDA 版 torch（首次较慢）...
     uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
     if errorlevel 1 (
         echo [WARN] CUDA 版 torch 安装失败，回退到 CPU 版。
-        uv sync --extra aesthetic
+        uv sync --inexact --extra aesthetic --extra structure --extra yolo --group dev
     ) else (
-        uv sync --extra aesthetic --inexact
+        uv sync --inexact --extra aesthetic --extra structure --extra yolo --group dev
     )
 ) else (
-    echo [INFO] 安装/同步 aesthetic 依赖（torch CPU 版；想要 GPU 加速请用 run.bat --gpu）...
-    uv sync --extra aesthetic
+    echo [INFO] 安装/同步依赖（aesthetic+structure+yolo+dev；torch CPU 版，GPU 加速请用 run.bat --gpu）...
+    uv sync --inexact --extra aesthetic --extra structure --extra yolo --group dev
 )
 if errorlevel 1 (
     echo.
@@ -61,8 +61,8 @@ if errorlevel 1 (
 
 echo [INFO] 启动 Anime Image Curator ...
 echo [INFO] 浏览器打开 http://127.0.0.1:8000 （被占用会自动顺延）
-echo [INFO] 结构打分需额外依赖：uv sync --extra structure
-uv run python -m curator.app !APP_ARGS!
+echo [INFO] 感知 v2（结构/CCIP/VLM）依赖已含在默认同步；VLM 权重：python scripts/setup_models.py --only vlm
+uv run --no-sync python -m curator.app !APP_ARGS!
 
 echo.
 echo [INFO] Anime Image Curator 已停止。
