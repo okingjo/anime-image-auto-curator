@@ -51,9 +51,10 @@ suspect:
 structure:
   shadow: false
   parts:
-    body: 0.35
-    hands: 0.35
-    yolo: 0.30
+    body: 0.30
+    hands: 0.30
+    feet: 0.15             # v2 新增：脚趾/脚跟几何（仅重度畸形扣分）
+    yolo: 0.25
   pose:
     enabled: true
     det_conf: 0.30
@@ -61,12 +62,50 @@ structure:
     body_vis: 0.35
     hand_vis: 0.40
     hand_min_palm: 0.035
+    foot_vis: 0.40         # 脚部关键点可见阈值（低于则 N/A 不扣分）
+    detector: anime        # 人体检测器：anime(动漫域 v1.1_m) | humanart | coco
+    ab_shadow: humanart    # A/B 影子检测器：逐图记录分歧，不影响分数；设 "" 关闭
   yolo:
     vis_floor: 0.35
     top_k: 4
-    models: []
-    # 示例（取消注释并填入实际模型路径/HF 源，需 uv sync --extra yolo）：
-    # models:
-    #   - {id: hand, label: 手, source: "Bingsu/adetailer:hand_yolov8n.pt"}
-    #   - {id: face, label: 脸, source: "Bingsu/adetailer:face_yolov8n.pt"}
-    #   - {id: person, label: 人体, source: "/path/to/your_model.pt"}
+    models:
+      - {id: hand, label: 手, source: ".models/onnx/hand_yolov9c.onnx"}
+      - {id: face, label: 脸, source: ".models/onnx/face_yolov8n_v2.onnx"}
+    # ONNX 模型走 DirectML GPU；.pt 也可（自动导出 ONNX）。
+    # source 可为本地路径或 "repo_id:filename"（自动从 hf-mirror 下载）。
+
+# ---------------------------------------------------------------------------
+# 角色还原（CCIP 图像侧身份特征）。三层：参考图/变体比对、组内质心离群、
+# VLM 语义清单。换装/换发型：在 characters.yaml 配 variants + reference_images；
+# 无参考图时用“组内首张高置信图”动态锚定。shadow:true 先收集数据再转正。
+# ---------------------------------------------------------------------------
+character_ccip:
+  enabled: true
+  shadow: true
+  model: ccip-caformer_b36-24
+  threshold: 0.213         # 官方同角色阈值（metrics.json 可覆盖）
+  hair_relax: 1.4          # 换发型变体阈值放宽倍数
+  outfit_relax: 1.15       # prompt 服装重合度低时再放宽
+  group_outlier: 0.16      # 组内离群：高于组中位数此值 → flag
+  dynamic_anchor: true
+  cache: true
+
+# ---------------------------------------------------------------------------
+# 本地 VLM 判定（解剖合理性 + 角色清单）。运行时为便携 llama.cpp llama-server，
+# 二进制与 GGUF 全在 .models/ 内，零安装、随仓库脚本分发：
+#   python scripts/setup_models.py --only vlm
+# 级联门控：只在结构分低/有畸形 flag/需要角色清单时调用，省算力。
+# 已有 OpenAI 兼容端点可设 base_url 复用（此时不启动自带服务）。
+# ---------------------------------------------------------------------------
+vlm_judge:
+  enabled: false           # 权重下载完成后改 true
+  base_url: ""             # 例 http://127.0.0.1:11434/v1（Ollama）；留空用自带服务
+  mode: cascade            # cascade | all | off
+  gate: 0.85               # 结构分低于此值 → 可疑，触发 VLM
+  max_images: 400          # 每次扫描 VLM 调用预算
+  max_crops: 3             # 每图细节裁剪数（手优先，其次足/脸）
+  ctx: 8192
+  parallel: 2
+  timeout_s: 120
+  max_tokens: 300
+  cache: true

@@ -22,27 +22,30 @@ aesthetic = [
     "open-clip-torch",            # improved-clip backend
     "transformers",               # shadow-v2 backend (ViTForImageClassification)
     "aesthetic-predictor-v2-5",   # aesthetic-predictor-v2-5 backend (SigLIP)
-    "onnxruntime",                # skytnt-anime backend (ONNX)
+    "onnxruntime-directml; sys_platform == 'win32'",  # skytnt-anime backend (ONNX)
+    "onnxruntime; sys_platform != 'win32'",
     "huggingface_hub",            # model downloads
 ]
-# 结构打分（影子模式）：DWPose 骨架/手部几何检查。仅靠 onnxruntime，不引入 torch。
-# 模型（~340MB）首次使用时自动从 hf-mirror 下载。
+# 结构打分：DWPose 骨架/手部几何 + 检测器 A/B + 脚趾规则。仅靠 onnxruntime，不引入 torch。
+# Windows 用 DirectML 版（GPU），其他平台 CPU 版；两者互斥，避免同目录双发行版冲突。
+# 模型（~340MB）首次使用时自动从 hf-mirror 下载，或 scripts/setup_models.py 预下载。
 structure = [
-    "onnxruntime",
+    "onnxruntime-directml; sys_platform == 'win32'",
+    "onnxruntime; sys_platform != 'win32'",
     "huggingface_hub",
 ]
 # YOLO 部位检测板块（可选，仅当 curator.yaml 里配置了 structure.yolo.models 时需要）。
-# 注意：ultralytics 依赖 torch，建议与 --extra aesthetic 一起装。
+# 默认 .onnx 模型走 DirectML，无需本 extra；仅 .pt 模型回退 ultralytics（依赖 torch）。
 yolo = [
     "ultralytics",
 ]
-# 本地 VLM 结构/手部判定（Phase 3）。
-vlm = [
-    "torch",
-    "transformers",
-    "accelerate",
-    "bitsandbytes",
-]
+# 本地 VLM 结构/手部判定：便携 llama-server（llama.cpp）+ GGUF，零 Python 额外依赖。
+# 权重/二进制由 scripts/setup_models.py --only vlm 下载到 .models/，curator 按需自动启停。
+# 不装 Ollama、不引入 torch；既有 OpenAI 兼容端点可经 vlm_judge.base_url 复用。
+vlm = []
+
+[dependency-groups]
+dev = ["pytest"]
 
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"

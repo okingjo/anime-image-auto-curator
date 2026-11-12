@@ -39,6 +39,7 @@ class Scorer:
     available: bool = True
     reason: str = ""          # why unavailable (shown in UI)
     needs_image: bool = True  # False = metadata-only, cheap
+    wants_ctx: bool = False   # True = receives the shared per-image ctx dict
 
     def score(self, image: Optional[Image.Image], meta: ImageMeta) -> ScoreResult:
         raise NotImplementedError
@@ -59,6 +60,7 @@ def get_scorers() -> dict:
         (".quality", "QualityScorer", "质检"),
         (".aesthetic", "AestheticScorer", "美观度"),
         (".structure", "StructureScorer", "结构"),
+        (".character_ccip", "CharacterCCIPScorer", "角色还原"),
         (".vlm_judge", "VLMJudgeScorer", "VLM判定"),
     ]:
         try:

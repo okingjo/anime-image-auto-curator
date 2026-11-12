@@ -235,7 +235,10 @@ def main():
     print("Anime Image Curator")
     print(f"Open http://{args.host}:{port}")
     print("=" * 60)
-    uvicorn.run(app, host=args.host, port=port, log_level="warning")
+    try:
+        uvicorn.run(app, host=args.host, port=port, log_level="warning")
+    finally:
+        curator.shutdown()
 
 
 if __name__ == "__main__":

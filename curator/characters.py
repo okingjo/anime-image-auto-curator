@@ -22,6 +22,10 @@ class Character:
     name_tags: list = field(default_factory=list)
     lora_patterns: list = field(default_factory=list)
     outfits: list = field(default_factory=list)  # list[Outfit]
+    # Image-side identity references (CCIP). Relative to repo root or absolute.
+    reference_images: list = field(default_factory=list)
+    # Outfit/hair variants: [{"name", "reference_images": [...], "hair_changed": bool}]
+    variants: list = field(default_factory=list)
 
     def default_outfit(self):
         for o in self.outfits:
@@ -57,6 +61,13 @@ def load_characters(path: str | Path) -> dict:
             name_tags=[str(t).strip().lower() for t in (c.get("name_tags") or [])],
             lora_patterns=[str(t).strip() for t in (c.get("lora_patterns") or [])],
             outfits=outfits,
+            reference_images=[str(p) for p in (c.get("reference_images") or [])],
+            variants=[
+                {"name": str(v.get("name", f"variant{i}")),
+                 "reference_images": [str(p) for p in (v.get("reference_images") or [])],
+                 "hair_changed": bool(v.get("hair_changed", False))}
+                for i, v in enumerate(c.get("variants") or [])
+            ],
         )
     return chars
 

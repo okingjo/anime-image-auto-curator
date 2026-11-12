@@ -80,10 +80,22 @@ class Curator:
                 st.configure(self.config.get("structure") or {})
             except Exception:
                 pass
+        # configure CCIP character fidelity + local VLM judge
+        for nm in ("character_ccip", "vlm_judge"):
+            sc = self.scorers.get(nm)
+            if sc is not None and hasattr(sc, "configure"):
+                try:
+                    cfg = dict(self.config.get(nm) or {})
+                    cfg.setdefault("characters_file", self.config["characters_file"])
+                    sc.configure(cfg)
+                except Exception:
+                    pass
         self.groups: dict = {}      # key -> {"key","positive","negative","character_id","members":[...]}
         self.selections: dict = {}  # key -> filename
         self.root: Optional[str] = None
         self.errors: list = []
+        self._telemetry: Optional[list] = None
+        self.telemetry_path: str = ""
 
     # ------------------------------------------------------------------ #
     def _load_config(self, path):
@@ -166,6 +178,14 @@ class Curator:
         files.sort()
 
         active = self._active_scorers()
+        for s in active:
+            rr = getattr(s, "reset_run", None)
+            if callable(rr):
+                try:
+                    rr()
+                except Exception:
+                    pass
+        self._telemetry = []
         for f in files:
             try:
                 rec_meta = read_meta(f)
@@ -188,7 +208,28 @@ class Curator:
             g["members"].sort(key=lambda r: r.composite, reverse=True)
             g["recommended"] = g["members"][0].filename if g["members"] else None
             g["suspect"] = self._group_suspect(g)
+        # layer-A CCIP group outlier pass (flags only; never changes ranking)
+        ccip = self.scorers.get("character_ccip")
+        if ccip is not None and hasattr(ccip, "group_pass"):
+            try:
+                ccip.group_pass(self.groups)
+            except Exception as e:
+                self.errors.append(f"ccip group_pass: {e}")
+        # persist per-image perception telemetry for calibration
+        from . import telemetry
+        self.telemetry_path = telemetry.write_run(
+            telemetry.run_path(), self._telemetry or [],
+            {"root": self.root, "n_images": len(self._telemetry or [])})
+        self._telemetry = None
         return self.summary()
+
+    def shutdown(self):
+        """Stop managed child processes (portable VLM server)."""
+        try:
+            from .scorers.vlm_server import SERVER
+            SERVER.stop()
+        except Exception:
+            pass
 
     def _group_suspect(self, g) -> Optional[str]:
         """Group-level 'probably reject' hint (calibrated 2026-10).
@@ -234,10 +275,14 @@ class Curator:
             except Exception as e:
                 self.errors.append(f"{f.name}: open failed: {e}")
 
+        ctx: dict = {"character_id": rec.character_id, "outfit": rec.outfit}
         weighted_sum, weight_total = 0.0, 0.0
         for s in active:
             try:
-                res = s.score(img, meta)
+                if getattr(s, "wants_ctx", False):
+                    res = s.score(img, meta, ctx)
+                else:
+                    res = s.score(img, meta)
             except Exception as e:
                 res = None
                 self.errors.append(f"{f.name}: scorer {s.name}: {e}")
@@ -259,6 +304,12 @@ class Curator:
             q = rec.scores.get("quality") or {}
             if q.get("flags"):
                 rec.composite = max(0.0, rec.composite - self.quality_flag_penalty)
+        if getattr(self, "_telemetry", None) is not None:
+            from .telemetry import image_row
+            try:
+                self._telemetry.append(image_row(rec, group_key(meta)))
+            except Exception:
+                pass
         return rec
 
     # ------------------------------------------------------------------ #

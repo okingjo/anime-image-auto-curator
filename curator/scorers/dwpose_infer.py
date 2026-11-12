@@ -260,16 +260,16 @@ class DWPoseRunner:
     """
 
     def __init__(self, det_path, pose_path, det_conf: float = 0.3,
-                 nms_iou: float = 0.45, max_persons: int = 4):
-        import onnxruntime as ort
-        provs = ort.get_available_providers()
-        providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
-                     if "CUDAExecutionProvider" in provs else ["CPUExecutionProvider"])
-        so = ort.SessionOptions()
-        so.log_severity_level = 3
-        self.det = ort.InferenceSession(str(det_path), sess_options=so, providers=providers)
-        self.pose = ort.InferenceSession(str(pose_path), sess_options=so, providers=providers)
-        self.det_in = self.det.get_inputs()[0].name
+                 nms_iou: float = 0.45, max_persons: int = 4, detector=None):
+        from .ort_utils import make_session, pick_providers
+        providers = pick_providers()
+        # `detector`: optional swappable person detector (anime/humanart/coco).
+        # When present, the internal COCO YOLOX session is not created at all.
+        self.external = detector
+        self.det = None if detector is not None else make_session(det_path, providers)
+        self.pose = make_session(pose_path, providers)
+        if self.det is not None:
+            self.det_in = self.det.get_inputs()[0].name
         self.pose_in = self.pose.get_inputs()[0].name
         self.det_conf = float(det_conf)
         self.nms_iou = float(nms_iou)
@@ -279,10 +279,17 @@ class DWPoseRunner:
     def infer(self, img: Image.Image) -> list:
         img = img.convert("RGB")
         W, H = img.size
-        tensor, scale = _det_preprocess(img)
-        out = self.det.run(None, {self.det_in: tensor})[0]
-        boxes, scores = _det_postprocess(np.asarray(out), scale, W, H,
-                                         self.det_conf, self.nms_iou)
+        if self.external is not None:
+            dets = self.external.detect(img)
+            boxes = [b for b, _ in dets]
+            scores = [s for _, s in dets]
+        else:
+            if self.det is None:
+                return []
+            tensor, scale = _det_preprocess(img)
+            out = self.det.run(None, {self.det_in: tensor})[0]
+            boxes, scores = _det_postprocess(np.asarray(out), scale, W, H,
+                                             self.det_conf, self.nms_iou)
         persons = []
         for box, ds in list(zip(boxes, scores))[: self.max_persons]:
             X1, Y1, BW, BH = _expand_box(box)

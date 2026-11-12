@@ -5,6 +5,10 @@
 #   name_tags     出现在 prompt 里的角色名 tag（命中其一即认定是该角色）
 #   lora_patterns 角色 LoRA 名的子串（命中其一也算）
 #   outfits       多套服装/皮肤，每套含 name + tags；一套可标 default: true
+#   reference_images  角色参考图（3-10 张干净立绘/截图，相对项目根或绝对路径）。
+#                     供 CCIP 图像侧角色还原比对；不填则用组内动态锚定。
+#   variants      换装/换发型变体：每个变体自己的参考图；hair_changed: true
+#                 时阈值自动放宽（CCIP 对发型敏感）。
 #
 # tags 用 prompt 里的原始写法即可（小写、不区分大小写匹配，会自动去转义/去权重）。
 
@@ -12,6 +16,15 @@ characters:
   - id: velina
     name_tags: ["velina airgid"]
     lora_patterns: ["Char-ZZZ-Velina"]
+    # reference_images:
+    #   - refs/velina/01.png
+    #   - refs/velina/02.png
+    # variants:
+    #   - name: swimsuit
+    #     reference_images: [refs/velina/swimsuit_01.png]
+    #   - name: shorthair
+    #     hair_changed: true
+    #     reference_images: [refs/velina/shorthair_01.png]
     outfits:
       - name: default
         default: true

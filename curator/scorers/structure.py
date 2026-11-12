@@ -40,7 +40,7 @@ from ..metadata import ImageMeta
 from .base import Scorer, ScoreResult
 from . import dwpose_infer as dw
 
-STRUCTURE_RULES_VERSION = "v1"
+STRUCTURE_RULES_VERSION = "v2"
 
 _CACHE_DIR = Path(__file__).resolve().parents[2] / ".models"
 
@@ -55,9 +55,14 @@ HAND_EDGES = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8),
 
 _DEFAULTS = {
     "shadow": True,
-    "parts": {"body": 0.35, "hands": 0.35, "yolo": 0.30},
+    "parts": {"body": 0.30, "hands": 0.30, "feet": 0.15, "yolo": 0.25},
     "pose": {"enabled": True, "det_conf": 0.30, "max_persons": 3,
-             "body_vis": 0.35, "hand_vis": 0.40, "hand_min_palm": 0.035},
+             "body_vis": 0.35, "hand_vis": 0.40, "hand_min_palm": 0.035,
+             "foot_vis": 0.40,
+             # swappable person detector feeding DWPose: anime | humanart | coco
+             "detector": "anime",
+             # A/B shadow detector (logged per image, never affects the score)
+             "ab_shadow": "humanart"},
     "yolo": {"vis_floor": 0.35, "top_k": 4, "models": []},
 }
 
@@ -94,7 +99,8 @@ def _angle(a, b, c) -> float:
 # Per-model YOLO wrapper
 # --------------------------------------------------------------------------- #
 class _YoloModel:
-    """One entry of the YOLO plate. `source` is a local path or "repo:file"."""
+    """One entry of the YOLO plate. `source` is a local path, "repo:file",
+    or a .onnx export (run on DirectML — no torch needed at inference)."""
 
     def __init__(self, cfg: dict):
         self.id = str(cfg.get("id") or "yolo")
@@ -103,6 +109,8 @@ class _YoloModel:
         self.available = bool(self.source)
         self.reason = "" if self.available else "缺少 source"
         self._model = None
+        self._sess = None
+        self._inp = None
         self._lock = threading.Lock()
 
     def _resolve_path(self) -> str:
@@ -116,34 +124,57 @@ class _YoloModel:
         raise RuntimeError(f"无法解析 YOLO 模型来源: {self.source}（支持本地路径或 repo:file）")
 
     def load(self):
-        if self._model is None:
-            from ultralytics import YOLO
-            self._model = YOLO(self._resolve_path())
-        return self._model
+        if self._model is None and self._sess is None:
+            if self.source.endswith(".onnx"):
+                from .ort_utils import make_session
+                self._sess = make_session(self._resolve_path())
+                self._inp = self._sess.get_inputs()[0].name
+            else:
+                from ultralytics import YOLO
+                self._model = YOLO(self._resolve_path())
+        return self._model if self._model is not None else self._sess
 
-    def detect(self, img: Image.Image, vis_floor: float, top_k: int) -> Optional[dict]:
-        """Returns {"n_det","max_conf","score"} or None (= part not visible)."""
+    def detect(self, img: Image.Image, vis_floor: float, top_k: int):
+        """Returns ({"n_det","max_conf","score"} | None, [boxes xyxy]).
+        None = part not visible. Boxes feed the VLM detail crops."""
         if not self.available:
-            return None
+            return None, []
         try:
-            model = self.load()
+            self.load()
             with self._lock:
-                res = model.predict(img, imgsz=640,
-                                    conf=max(0.15, vis_floor * 0.6), verbose=False)
-            confs = []
-            for r in res:
-                if r.boxes is not None and len(r.boxes):
-                    confs.extend(float(c) for c in r.boxes.conf.cpu().numpy())
+                if self._sess is not None:
+                    from .ort_utils import letterbox_yolo, yolo_post
+                    W, H = img.size
+                    tensor, scale, dw_, dh = letterbox_yolo(img, 640)
+                    out = self._sess.run(None, {self._inp: tensor})[0]
+                    boxes, scores = yolo_post(out, scale, dw_, dh, W, H,
+                                              conf=max(0.15, vis_floor * 0.6),
+                                              iou=0.45, class_id=0)
+                    pairs = sorted(zip(boxes, scores), key=lambda t: -t[1])
+                else:
+                    res = self._model.predict(img, imgsz=640,
+                                              conf=max(0.15, vis_floor * 0.6),
+                                              verbose=False)
+                    pairs = []
+                    for r in res:
+                        if r.boxes is not None and len(r.boxes):
+                            xyxy = r.boxes.xyxy.cpu().numpy()
+                            cf = r.boxes.conf.cpu().numpy()
+                            pairs.extend((list(map(float, xyxy[i])), float(cf[i]))
+                                         for i in range(len(cf)))
+                    pairs.sort(key=lambda t: -t[1])
         except Exception as e:
             self.available = False
             self.reason = f"运行失败: {type(e).__name__} {str(e)[:80]}"
-            return None
-        vis = sorted([c for c in confs if c >= vis_floor], reverse=True)
+            return None, []
+        vis = [(b, c) for b, c in pairs if c >= vis_floor]
         if not vis:
-            return None
+            return None, []
         top = vis[:max(1, top_k)]
-        return {"n_det": len(vis), "max_conf": round(vis[0], 3),
-                "score": round(min(top), 3)}
+        confs = [c for _, c in top]
+        return ({"n_det": len(vis), "max_conf": round(confs[0], 3),
+                 "score": round(min(confs), 3)},
+                [b for b, _ in top])
 
 
 # --------------------------------------------------------------------------- #
@@ -153,6 +184,7 @@ class StructureScorer(Scorer):
     name = "structure"
     label = "结构"
     needs_image = True
+    wants_ctx = True   # publishes persons/ROIs for character_ccip + vlm_judge
 
     def __init__(self):
         self.cfg = dict(_DEFAULTS)
@@ -160,6 +192,11 @@ class StructureScorer(Scorer):
         self._runner = None
         self._runner_lock = threading.Lock()
         self._yolos: list = []
+        self._detector = None
+        self._ab_detector = None
+        self._det_kind = ""
+        self._ab_kind = ""
+        self._det_err = None
         self.reason = ""
         try:
             import onnxruntime  # noqa: F401
@@ -174,6 +211,10 @@ class StructureScorer(Scorer):
         self.shadow = bool(self.cfg.get("shadow", True))
         models = (self.cfg.get("yolo") or {}).get("models") or []
         self._yolos = [_YoloModel(m) for m in models[:4]]   # hard cap: 4 models
+        self._runner = None
+        self._detector = None
+        self._ab_detector = None
+        self._det_err = None
 
     # ---- model lifecycle ----------------------------------------------------
     def _ensure_runner(self):
@@ -181,11 +222,32 @@ class StructureScorer(Scorer):
             if self._runner is None:
                 pcfg = self.cfg.get("pose") or {}
                 det, pose = dw.ensure_models(_CACHE_DIR)
+                # Swappable person detector (anime default). On any failure
+                # fall back to the runner's internal COCO YOLOX.
+                kind = str(pcfg.get("detector", "anime"))
+                detector = None
+                try:
+                    from .person_detect import build_detector
+                    detector = build_detector(kind, conf=float(pcfg.get("det_conf", 0.30)))
+                    self._det_kind = kind
+                except Exception as e:
+                    self._det_err = f"{type(e).__name__}: {str(e)[:100]}"
                 self._runner = dw.DWPoseRunner(
                     det, pose,
                     det_conf=float(pcfg.get("det_conf", 0.30)),
                     max_persons=int(pcfg.get("max_persons", 3)),
+                    detector=detector,
                 )
+                # A/B shadow detector: logged per image, never affects score
+                ab = str(pcfg.get("ab_shadow", "") or "")
+                if ab and ab != kind:
+                    try:
+                        from .person_detect import build_detector
+                        self._ab_detector = build_detector(
+                            ab, conf=float(pcfg.get("det_conf", 0.30)))
+                        self._ab_kind = ab
+                    except Exception:
+                        self._ab_detector = None
             return self._runner
 
     def prewarm(self):
@@ -207,7 +269,7 @@ class StructureScorer(Scorer):
         return self._runner is not None
 
     # ---- main entry ---------------------------------------------------------
-    def score(self, image: Optional[Image.Image], meta: ImageMeta):
+    def score(self, image: Optional[Image.Image], meta: ImageMeta, ctx: dict = None):
         if image is None or not self.available:
             return None
         pcfg = self.cfg.get("pose") or {}
@@ -224,11 +286,17 @@ class StructureScorer(Scorer):
 
         flags: list = []
         feats: dict = {"rules_version": STRUCTURE_RULES_VERSION,
-                       "n_persons": len(persons), "pose_error": pose_err}
+                       "n_persons": len(persons), "pose_error": pose_err,
+                       "detector": self._det_kind or "coco"}
+        if self._det_err:
+            feats["detector_error"] = self._det_err
         subs: dict = {}
+        if ctx is not None:
+            ctx["persons"] = persons
+            ctx["person_boxes"] = [p["box"] for p in persons]
 
-        # ---- body + hands from DWPose ---------------------------------------
-        body_scores, hand_scores = [], []
+        # ---- body + hands + feet from DWPose ---------------------------------
+        body_scores, hand_scores, foot_scores = [], [], []
         if persons:
             for pi, p in enumerate(persons):
                 tag = f"人{pi+1}" if len(persons) > 1 else ""
@@ -240,15 +308,21 @@ class StructureScorer(Scorer):
                     if hs is not None:
                         hand_scores.append(hs)
                         flags.extend(hflags)
+                fs, fflags, _ff = self._check_foot(p, pcfg, feats, tag)
+                if fs is not None:
+                    foot_scores.append(fs)
+                    flags.extend(fflags)
         subs["body"] = round(float(np.min(body_scores)), 3) if body_scores else None
         subs["hands"] = round(float(np.mean(hand_scores)), 3) if hand_scores else None
+        subs["feet"] = round(float(np.mean(foot_scores)), 3) if foot_scores else None
 
         # ---- YOLO plate (average of per-model scores; N/A models excluded) --
         plate_scores, yolo_info = [], []
+        yolo_boxes: dict = {}
         vis_floor = float(ycfg.get("vis_floor", 0.35))
         top_k = int(ycfg.get("top_k", 4))
         for y in self._yolos:
-            r = y.detect(image, vis_floor, top_k)
+            r, boxes = y.detect(image, vis_floor, top_k)
             info = {"id": y.id, "label": y.label, "available": y.available}
             if not y.available:
                 info["reason"] = y.reason
@@ -257,40 +331,92 @@ class StructureScorer(Scorer):
             else:
                 info.update({"detected": True, **r})
                 plate_scores.append(r["score"])
+                yolo_boxes[y.id] = boxes
                 if r["score"] < 0.5:
                     flags.append(f"{y.label}低置信({r['score']:.2f})")
             yolo_info.append(info)
         subs["yolo"] = round(float(np.mean(plate_scores)), 3) if plate_scores else None
         feats["yolo_models"] = yolo_info
 
+        # ---- detector A/B telemetry (shadow only, never affects the score) ---
+        if self._ab_detector is not None:
+            try:
+                from .person_detect import detector_agreement
+                ab_dets = self._ab_detector.detect(image)
+                feats["detector_ab"] = {
+                    "primary": self._det_kind or "coco", "shadow": self._ab_kind,
+                    **detector_agreement([p["box"] for p in persons],
+                                         [b for b, _ in ab_dets])}
+            except Exception as e:
+                feats["detector_ab"] = {"error": f"{type(e).__name__}: {str(e)[:60]}"}
+
         # ---- visibility checklist (for UI + feedback analysis) ---------------
         hands_f = feats.get("hands", [])
         body_f = feats.get("body", [])
+        feet_f = feats.get("feet", [])
         feats["visible"] = {
             "person": bool(persons),
             "hand_l": any(h.get("side") == "l" and h.get("visible") for h in hands_f),
             "hand_r": any(h.get("side") == "r" and h.get("visible") for h in hands_f),
-            "feet": any(b.get("feet_conf", 0.0) >= 0.4 for b in body_f),
+            "feet": any(f.get("visible") for f in feet_f) or
+                    any(b.get("feet_conf", 0.0) >= 0.4 for b in body_f),
             "yolo_parts": [i["id"] for i in yolo_info if i.get("detected")],
         }
+
+        # ---- ROIs for the VLM detail pass ------------------------------------
+        rois = {"hand": [], "foot": [], "face": []}
+        for b in yolo_boxes.get("hand", [])[:4]:
+            rois["hand"].append({"box": b, "src": "yolo"})
+        if not rois["hand"]:
+            hand_vis = float(pcfg.get("hand_vis", 0.40))
+            for p in persons:
+                for rng in (dw.HAND_L, dw.HAND_R):
+                    k = p["kpts"][rng[0]:rng[1]]
+                    ks = p["kscores"][rng[0]:rng[1]]
+                    if float(ks.mean()) >= hand_vis:
+                        x1, y1 = k.min(axis=0)
+                        x2, y2 = k.max(axis=0)
+                        rois["hand"].append({"box": [float(x1), float(y1),
+                                                     float(x2), float(y2)],
+                                             "src": "pose"})
+            rois["hand"] = rois["hand"][:4]
+        foot_vis = float(pcfg.get("foot_vis", 0.40))
+        for p in persons:
+            k, ks = p["kpts"], p["kscores"]
+            for bt, st, hl, an in ((17, 18, 19, 15), (20, 21, 22, 16)):
+                if float(ks[[bt, st, hl]].mean()) >= foot_vis:
+                    pts = k[[bt, st, hl, an]]
+                    x1, y1 = pts.min(axis=0)
+                    x2, y2 = pts.max(axis=0)
+                    rois["foot"].append({"box": [float(x1), float(y1),
+                                                 float(x2), float(y2)],
+                                         "src": "pose"})
+        rois["foot"] = rois["foot"][:2]
+        for b in yolo_boxes.get("face", [])[:1]:
+            rois["face"].append({"box": b, "src": "yolo"})
 
         # ---- aggregate over AVAILABLE parts only -----------------------------
         weights = self.cfg.get("parts") or {}
         num = den = 0.0
-        for part in ("body", "hands", "yolo"):
+        for part in ("body", "hands", "feet", "yolo"):
             v = subs.get(part)
             if v is not None:
                 w = float(weights.get(part, 0.0))
                 num += w * float(v)
                 den += w
         if den <= 0:
+            if ctx is not None:
+                ctx["structure"] = {"score": None, "flags": [], "rois": rois}
             return None           # nothing measurable -> N/A, skip entirely
         overall = num / den
 
-        feats["parts"] = {k: subs.get(k) for k in ("body", "hands", "yolo")}
+        feats["parts"] = {k: subs.get(k) for k in ("body", "hands", "feet", "yolo")}
         subs["overall"] = round(overall, 3)
         subs["feats"] = feats
         subs["visible"] = feats["visible"]
+        if ctx is not None:
+            ctx["structure"] = {"score": round(overall, 3), "flags": flags,
+                                "rois": rois}
         return ScoreResult(score=round(overall, 3), subs=subs, flags=flags,
                            notes="shadow" if self.shadow else "")
 
@@ -455,6 +581,67 @@ class StructureScorer(Scorer):
         score = max(0.0, score)
         f["hand_score"] = round(score, 3)
         feats.setdefault("hands", []).append(f)
+        return score, flags, f
+
+    # ---- foot rules ----------------------------------------------------------
+    def _check_foot(self, p: dict, pcfg: dict, feats: dict, tag: str):
+        """Foot geometry from COCO-WholeBody keypoints 17-22 (big toe, small
+        toe, heel per foot) + ankles 15/16. Conservative thresholds: anime
+        feet are often stylized, so only gross deformities are penalized.
+        Returns (score|None, flags, feats_sub); None = feet not visible."""
+        k, ks = p["kpts"], p["kscores"]
+        vis_conf = float(pcfg.get("foot_vis", 0.40))
+        f: dict = {}
+        per_foot: dict = {}
+        for side, (bt, st, hl, an) in (("l", (17, 18, 19, 15)),
+                                       ("r", (20, 21, 22, 16))):
+            conf = float(ks[[bt, st, hl]].mean())
+            f[f"{side}_conf"] = round(conf, 3)
+            if conf < vis_conf:
+                per_foot[side] = None
+                continue
+            toe_mid = (k[bt] + k[st]) / 2
+            foot_len = max(_dist(toe_mid, k[hl]), 1e-3)
+            spread = _dist(k[bt], k[st])
+            heel_ang = _angle(k[bt], k[hl], k[st])
+            ankle_gap = _dist(k[an], k[hl])
+            per_foot[side] = {"len": foot_len}
+            f[f"{side}_spread"] = round(spread / foot_len, 3)
+            f[f"{side}_heel_angle"] = round(heel_ang, 1)
+            f[f"{side}_ankle_ratio"] = round(ankle_gap / foot_len, 3)
+        vis_feet = {s: v for s, v in per_foot.items() if v}
+        if not vis_feet:
+            f["visible"] = False
+            feats.setdefault("feet", []).append(f)
+            return None, [], f
+        f["visible"] = True
+        flags = []
+        score = 1.0
+        cn = {"l": "左脚", "r": "右脚"}
+        for side, v in vis_feet.items():
+            spread = f[f"{side}_spread"]
+            if spread > 0.95:
+                flags.append(f"{tag}{cn[side]}脚趾异常张开")
+                score -= 0.4
+            elif spread < 0.06:
+                flags.append(f"{tag}{cn[side]}脚趾融合")
+                score -= 0.3
+            if f[f"{side}_heel_angle"] > 95:
+                flags.append(f"{tag}{cn[side]}足部扭转")
+                score -= 0.35
+            if f[f"{side}_ankle_ratio"] > 0.75:
+                flags.append(f"{tag}{cn[side]}踝足脱节")
+                score -= 0.3
+        if len(vis_feet) == 2:
+            l1, l2 = per_foot["l"]["len"], per_foot["r"]["len"]
+            ratio = max(l1, l2) / max(min(l1, l2), 1e-3)
+            f["asym"] = round(ratio, 2)
+            if ratio > 1.6:
+                flags.append(f"{tag}左右脚尺寸不对称({ratio:.2f})")
+                score -= 0.25
+        score = max(0.0, score)
+        f["foot_score"] = round(score, 3)
+        feats.setdefault("feet", []).append(f)
         return score, flags, f
 
     # ---- overlay rendering ---------------------------------------------------
