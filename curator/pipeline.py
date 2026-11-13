@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -96,6 +97,9 @@ class Curator:
         self.errors: list = []
         self._telemetry: Optional[list] = None
         self.telemetry_path: str = ""
+        # Live scan progress — read by /api/progress; updated via atomic dict swap.
+        self.progress = {"running": False, "phase": "idle", "total": 0, "done": 0,
+                         "current": "", "groups": 0, "started": 0.0, "error": ""}
 
     # ------------------------------------------------------------------ #
     def _load_config(self, path):
@@ -163,6 +167,12 @@ class Curator:
 
         threading.Thread(target=_bg, daemon=True).start()
 
+    def _set_progress(self, **kw):
+        """Atomic progress update: swap in a fresh dict so readers never see torn state."""
+        p = dict(self.progress)
+        p.update(kw)
+        self.progress = p
+
     def scan(self, folder: str, recursive: Optional[bool] = None):
         folder_p = Path(folder).expanduser()
         if not folder_p.is_dir():
@@ -171,56 +181,68 @@ class Curator:
         self.groups = {}
         self.selections = {}
         self.errors = []
+        self._set_progress(running=True, phase="listing", total=0, done=0,
+                           current="", groups=0, started=time.time(), error="")
+        try:
+            rec = bool(self.recursive if recursive is None else recursive)
+            files = folder_p.rglob("*") if rec else folder_p.glob("*")
+            files = [f for f in files if f.is_file() and is_image(f)]
+            files.sort()
+            self._set_progress(phase="scoring", total=len(files))
 
-        rec = bool(self.recursive if recursive is None else recursive)
-        files = folder_p.rglob("*") if rec else folder_p.glob("*")
-        files = [f for f in files if f.is_file() and is_image(f)]
-        files.sort()
-
-        active = self._active_scorers()
-        for s in active:
-            rr = getattr(s, "reset_run", None)
-            if callable(rr):
+            active = self._active_scorers()
+            for s in active:
+                rr = getattr(s, "reset_run", None)
+                if callable(rr):
+                    try:
+                        rr()
+                    except Exception:
+                        pass
+            self._telemetry = []
+            for i, f in enumerate(files):
+                self._set_progress(done=i, current=f.name)
                 try:
-                    rr()
-                except Exception:
-                    pass
-        self._telemetry = []
-        for f in files:
-            try:
-                rec_meta = read_meta(f)
-                record = self._build_record(f, rec_meta, active)
-            except Exception as e:
-                self.errors.append(f"{f.name}: {e}")
-                continue
-            key = group_key(rec_meta)
-            g = self.groups.setdefault(key, {
-                "key": key,
-                "positive": rec_meta.positive,
-                "negative": rec_meta.negative,
-                "character_id": record.character_id,
-                "members": [],
-            })
-            g["members"].append(record)
+                    rec_meta = read_meta(f)
+                    record = self._build_record(f, rec_meta, active)
+                except Exception as e:
+                    self.errors.append(f"{f.name}: {e}")
+                    continue
+                key = group_key(rec_meta)
+                g = self.groups.setdefault(key, {
+                    "key": key,
+                    "positive": rec_meta.positive,
+                    "negative": rec_meta.negative,
+                    "character_id": record.character_id,
+                    "members": [],
+                })
+                g["members"].append(record)
+            self._set_progress(done=len(files), current="", phase="grouping",
+                               groups=len(self.groups))
 
-        # rank within groups + recommend best + group-level suspect hint
-        for g in self.groups.values():
-            g["members"].sort(key=lambda r: r.composite, reverse=True)
-            g["recommended"] = g["members"][0].filename if g["members"] else None
-            g["suspect"] = self._group_suspect(g)
-        # layer-A CCIP group outlier pass (flags only; never changes ranking)
-        ccip = self.scorers.get("character_ccip")
-        if ccip is not None and hasattr(ccip, "group_pass"):
-            try:
-                ccip.group_pass(self.groups)
-            except Exception as e:
-                self.errors.append(f"ccip group_pass: {e}")
-        # persist per-image perception telemetry for calibration
-        from . import telemetry
-        self.telemetry_path = telemetry.write_run(
-            telemetry.run_path(), self._telemetry or [],
-            {"root": self.root, "n_images": len(self._telemetry or [])})
-        self._telemetry = None
+            # rank within groups + recommend best + group-level suspect hint
+            for g in self.groups.values():
+                g["members"].sort(key=lambda r: r.composite, reverse=True)
+                g["recommended"] = g["members"][0].filename if g["members"] else None
+                g["suspect"] = self._group_suspect(g)
+            # layer-A CCIP group outlier pass (flags only; never changes ranking)
+            ccip = self.scorers.get("character_ccip")
+            if ccip is not None and hasattr(ccip, "group_pass"):
+                try:
+                    ccip.group_pass(self.groups)
+                except Exception as e:
+                    self.errors.append(f"ccip group_pass: {e}")
+            self._set_progress(phase="saving")
+            # persist per-image perception telemetry for calibration
+            from . import telemetry
+            self.telemetry_path = telemetry.write_run(
+                telemetry.run_path(), self._telemetry or [],
+                {"root": self.root, "n_images": len(self._telemetry or [])})
+            self._telemetry = None
+        except Exception as e:
+            self._set_progress(running=False, phase="error", error=str(e))
+            raise
+        else:
+            self._set_progress(running=False, phase="done")
         return self.summary()
 
     def shutdown(self):
@@ -344,6 +366,7 @@ class Curator:
         return {
             "root": self.root,
             "scorers": scorers_info,
+            "progress": self.progress,
             "weights": self.weights,
             "quality_flag_penalty": self.quality_flag_penalty,
             "characters": list(self.characters.keys()),

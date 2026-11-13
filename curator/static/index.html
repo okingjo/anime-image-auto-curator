@@ -75,6 +75,39 @@
   .vis{display:inline-block;font-size:9.5px;padding:1px 4px;border-radius:4px;margin-left:2px}
   .vis.y{color:var(--ok);background:#16301f}
   .vis.n{color:var(--mut);background:#1a1e29}
+  /* ---- live scan progress ---- */
+  .scanprog{margin-top:8px;padding:8px 12px;background:var(--card);border:1px solid var(--line);border-radius:10px}
+  .scanprog[hidden]{display:none}
+  .sp-top{display:flex;align-items:center;gap:10px;font-size:12px}
+  .sp-phase{display:flex;align-items:center;gap:6px;font-weight:600}
+  .sp-dot{width:7px;height:7px;border-radius:50%;background:var(--acc);animation:sppulse 1s ease-in-out infinite}
+  .scanprog.done .sp-dot{background:var(--ok);animation:none}
+  .scanprog.error .sp-dot{background:var(--bad);animation:none}
+  .sp-count{color:var(--mut);font-variant-numeric:tabular-nums}
+  .sp-pct{margin-left:auto;color:var(--acc);font-weight:700;font-size:13px;font-variant-numeric:tabular-nums}
+  .scanprog.done .sp-pct{color:var(--ok)}
+  .scanprog.error .sp-pct{color:var(--bad)}
+  .sp-eta{color:var(--mut);font-variant-numeric:tabular-nums;min-width:120px;text-align:right}
+  .sp-track{height:8px;border-radius:4px;background:#2a3145;margin:6px 0 4px;overflow:hidden}
+  .sp-fill{height:100%;width:0;border-radius:4px;background:linear-gradient(90deg,var(--acc),var(--ok));
+        position:relative;overflow:hidden;transition:width .35s ease}
+  .sp-fill::after{content:"";position:absolute;inset:0;
+        background:linear-gradient(90deg,transparent,#ffffff33,transparent);
+        transform:translateX(-100%);animation:spshimmer 1.4s linear infinite}
+  .scanprog.done .sp-fill::after,.scanprog.error .sp-fill::after{animation:none;opacity:0}
+  .sp-fill.indet{width:100%!important;
+        background:repeating-linear-gradient(45deg,var(--acc) 0 12px,#3d5a99 12px 24px);
+        background-size:34px 100%;animation:spstripes .8s linear infinite}
+  .sp-fill.indet::after{animation:none;opacity:0}
+  .scanprog.error .sp-fill{background:var(--bad)}
+  .sp-file{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  @keyframes sppulse{0%,100%{opacity:1}50%{opacity:.25}}
+  @keyframes spshimmer{to{transform:translateX(100%)}}
+  @keyframes spstripes{to{background-position:34px 0}}
+  @media (prefers-reduced-motion:reduce){
+    .sp-dot,.sp-fill::after,.sp-fill.indet{animation:none}
+    .sp-fill{transition:none}
+  }
   .err{color:var(--bad);font-size:12px;margin-top:6px}
   .grow{flex:1}
 </style>
@@ -103,6 +136,16 @@
     <label class="mut" style="cursor:pointer"><input id="filterflags" type="checkbox"
       style="min-width:auto" onchange="render()"/> 只看有结构问题的组</label>
     <span class="mut" id="shadowhint"></span>
+  </div>
+  <div class="scanprog" id="scanprog" hidden>
+    <div class="sp-top">
+      <span class="sp-phase"><span class="sp-dot"></span><span id="spphase">准备中</span></span>
+      <span class="sp-count" id="spcount"></span>
+      <span class="sp-pct" id="sppct"></span>
+      <span class="sp-eta" id="speta"></span>
+    </div>
+    <div class="sp-track"><div class="sp-fill" id="spfill"></div></div>
+    <div class="sp-file" id="spfile"></div>
   </div>
   <div class="err" id="err"></div>
 </header>
@@ -189,10 +232,80 @@ async function onAeChange(){
   }
 }
 
+/* ---- live scan progress ---- */
+const PHASE_LABEL={listing:"列出文件",scoring:"逐图打分",grouping:"分组排序",saving:"写入证据",done:"完成",error:"出错",idle:"空闲"};
+let progTimer=null, progAuto=false, progSeenRunning=false;
+
+function fmtDur(s){
+  s=Math.max(0,Math.round(s));
+  return s<60? s+"秒" : Math.floor(s/60)+"分"+(s%60)+"秒";
+}
+
+function renderProg(p){
+  const box=$("scanprog");
+  if(!p||p.phase==="idle"){box.hidden=true;return;}
+  box.hidden=false;
+  box.classList.toggle("done",p.phase==="done");
+  box.classList.toggle("error",p.phase==="error");
+  $("spphase").textContent=PHASE_LABEL[p.phase]||p.phase;
+  const fill=$("spfill");
+  const scoring=p.phase==="scoring"&&p.total>0;
+  fill.classList.toggle("indet",!scoring&&p.phase!=="done"&&p.phase!=="error");
+  const pctv=scoring?Math.round(p.done/p.total*100):((p.phase==="done"||p.phase==="error")?100:0);
+  fill.style.width=pctv+"%";
+  $("sppct").textContent=(scoring||p.phase==="done")?pctv+"%":"";
+  let count=p.total?`${p.done} / ${p.total} 张`:"";
+  if(p.groups) count+=(count?" · ":"")+`${p.groups} 组`;
+  $("spcount").textContent=count;
+  const elapsed=p.started?Date.now()/1000-p.started:0;
+  let eta="";
+  if(p.running){
+    eta="已用 "+fmtDur(elapsed);
+    if(scoring&&p.done>0) eta+=" · 剩余约 "+fmtDur(elapsed/p.done*(p.total-p.done));
+  }
+  $("speta").textContent=eta;
+  let file=p.current?("▸ "+p.current):"";
+  if(p.phase==="scoring"&&p.done===0&&elapsed>6) file="首次打分可能在加载/下载模型，请稍候…";
+  if(p.phase==="error") file=p.error||"未知错误";
+  if(p.phase==="done") file=`共 ${p.total} 张 · ${p.groups} 组`;
+  $("spfile").textContent=file;
+  $("spfile").title=p.current||"";
+}
+
+async function pollProg(){
+  try{
+    const r=await fetch("/api/progress");
+    if(!r.ok) return;
+    const p=await r.json();
+    if(p.running) progSeenRunning=true;
+    renderProg(p);
+    if(progSeenRunning&&!p.running&&(p.phase==="done"||p.phase==="error")){
+      stopProgPoll();
+      if(progAuto){
+        progAuto=false;
+        $("scanbtn").textContent="扫描 Scan";$("scanbtn").disabled=false;
+        if(p.phase==="done") await loadState();
+        else $("err").textContent="启动扫描失败："+(p.error||"");
+      }
+      setTimeout(()=>{const b=$("scanprog");if(b&&!b.classList.contains("error"))b.hidden=true;},1200);
+    }
+  }catch(e){/* transient hiccup — keep polling */}
+}
+
+function startProgPoll(auto){
+  progAuto=!!auto; progSeenRunning=false;
+  if(progTimer) return;
+  pollProg();
+  progTimer=setInterval(pollProg,400);
+}
+function stopProgPoll(){if(progTimer){clearInterval(progTimer);progTimer=null;}}
+
 async function doScan(){
   const folder=$("folder").value.trim();
   if(!folder){alert("请填写文件夹路径");return;}
   $("err").textContent=""; $("scanbtn").textContent="扫描中…"; $("scanbtn").disabled=true;
+  renderProg({running:true,phase:"listing",total:0,done:0,current:"",groups:0,started:Date.now()/1000,error:""});
+  startProgPoll(false);
   try{
     const r=await fetch("/api/scan",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({folder,recursive:$("recursive").checked})});
@@ -200,8 +313,15 @@ async function doScan(){
     if(!r.ok){throw new Error(j.detail||"扫描失败");}
     await loadState();
     if(j.errors&&j.errors.length){$("err").textContent="部分文件出错："+j.errors.slice(0,5).join(" | ");}
-  }catch(e){$("err").textContent=String(e.message||e);}
-  finally{$("scanbtn").textContent="扫描 Scan";$("scanbtn").disabled=false;}
+  }catch(e){$("err").textContent=String(e.message||e);$("scanprog").hidden=true;}
+  finally{
+    $("scanbtn").textContent="扫描 Scan";$("scanbtn").disabled=false;
+    stopProgPoll();
+    if(!$("scanprog").hidden){
+      try{renderProg(await (await fetch("/api/progress")).json());}catch(e){}
+      setTimeout(()=>{const b=$("scanprog");if(!b.classList.contains("error"))b.hidden=true;},1200);
+    }
+  }
 }
 
 async function loadState(){
@@ -398,7 +518,16 @@ const pct=x=>(x==null?"-":Math.round(x*100));
 function escapeHtml(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 function escapeAttr(s){return (s||"").replace(/'/g,"\\'");}
 
-loadStatus().then(()=>fetch("/api/state").then(r=>r.json()).then(s=>{if(s&&s.root){$("folder").value=s.root;} if(s&&s.groups&&s.groups.length){STATE=s;render();}}));
+loadStatus().then(()=>fetch("/api/state").then(r=>r.json()).then(s=>{
+  if(s&&s.root){$("folder").value=s.root;}
+  if(s&&s.groups&&s.groups.length){STATE=s;render();}
+  // --folder auto-scan (or a scan started in another tab) already running?
+  const p=s&&s.progress;
+  if(p&&p.running){
+    $("scanbtn").textContent="扫描中…";$("scanbtn").disabled=true;
+    renderProg(p);startProgPoll(true);
+  }
+}));
 </script>
 </body>
 </html>

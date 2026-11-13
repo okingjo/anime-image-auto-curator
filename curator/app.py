@@ -94,6 +94,30 @@ def set_aesthetic(req: SetAestheticReq):
     return res
 
 
+try:
+    import numpy as _np
+except ImportError:  # base install has no numpy
+    _np = None
+
+
+def _json_safe(obj):
+    """Recursively convert numpy scalars/arrays to plain Python types.
+
+    Scorers (structure/CCIP/aesthetic) may emit np.float32; FastAPI's
+    jsonable_encoder cannot serialize those and would 500 on /api/state.
+    """
+    if _np is not None:
+        if isinstance(obj, _np.generic):
+            return obj.item()
+        if isinstance(obj, _np.ndarray):
+            return obj.tolist()
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
 class ScanReq(BaseModel):
     folder: str
     recursive: bool | None = None
@@ -106,8 +130,14 @@ def scan(req: ScanReq):
 
 
 @app.get("/api/state")
-def state():
-    return curator.state()
+def api_state():
+    return _json_safe(curator.state())
+
+
+@app.get("/api/progress")
+def api_progress():
+    """Lightweight live scan progress (pollable; no group serialization)."""
+    return curator.progress
 
 
 @app.get("/api/image")
@@ -152,10 +182,10 @@ def export(req: ExportReq):
             raise HTTPException(400, "copy 模式需要 dest 目录")
         copied = curator.export_copy(req.dest)
         fb = curator.record_feedback("copy", copied) if req.record else None
-        return {"mode": "copy", "copied": copied, "feedback": fb}
+        return _json_safe({"mode": "copy", "copied": copied, "feedback": fb})
     sel = curator.selected_paths()
     fb = curator.record_feedback("json", [i["filename"] for i in sel]) if req.record else None
-    return JSONResponse({"mode": "json", "selected": sel, "feedback": fb})
+    return JSONResponse(_json_safe({"mode": "json", "selected": sel, "feedback": fb}))
 
 
 @app.get("/api/overlay")
