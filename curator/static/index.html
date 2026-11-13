@@ -279,7 +279,7 @@ async function pollProg(){
     const p=await r.json();
     if(p.running) progSeenRunning=true;
     renderProg(p);
-    if(progSeenRunning&&!p.running&&(p.phase==="done"||p.phase==="error")){
+    if((progSeenRunning||progAuto)&&!p.running&&(p.phase==="done"||p.phase==="error")){
       stopProgPoll();
       if(progAuto){
         progAuto=false;
