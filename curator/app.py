@@ -199,6 +199,10 @@ def main():
         global curator
         curator = Curator(args.config)
 
+    for s in curator.scorers.values():
+        mark = "OK " if s.available else "OFF"
+        print(f"[scorer] {mark} {s.name}: {getattr(s, 'reason', '') or '就绪'}", flush=True)
+
     # Eagerly load heavy models in the background (non-blocking).
     curator.prewarm()
 

@@ -129,7 +129,16 @@ const SCORE_LABEL={quality:"质检",aesthetic:"美观",tagger_fidelity:"还原",
 const PART_LABEL={hand_l:"左手",hand_r:"右手",person:"人体",feet:"脚"};
 
 async function loadStatus(){
-  const s=await (await fetch("/api/status")).json();
+  let s;
+  try{
+    const r=await fetch("/api/status");
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    s=await r.json();
+    if(!s||!Array.isArray(s.scorers)) throw new Error("响应缺少 scorers 字段");
+  }catch(e){
+    $("err").textContent="状态接口 /api/status 加载失败："+String(e.message||e)+"（按 F12 查看 Console/Network，或检查 cmd 窗口）";
+    return;
+  }
   if(s.root) $("rootinfo").textContent="· "+s.root;
   const chips=s.scorers.map(x=>{
     const t=x.available?"启用":"未启用";
