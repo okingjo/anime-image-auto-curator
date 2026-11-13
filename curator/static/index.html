@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Anime Image Curator · 动漫图筛</title>
+<title>Anime Image Curator</title>
 <style>
   :root{--bg:#12141a;--card:#1b1f28;--card2:#232836;--line:#2c3242;--txt:#e6e9ef;--mut:#9aa3b2;
         --acc:#5b8cff;--gold:#ffcf5b;--bad:#ff6b6b;--ok:#4cd07d;}
@@ -109,37 +109,47 @@
     .sp-fill{transition:none}
   }
   .err{color:var(--bad);font-size:12px;margin-top:6px}
+  /* in-page toast: alert() is silently blocked once the click's transient
+     activation expires (~5s) — large copies exceed that. Toast never blocks. */
+  .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:100;
+         background:var(--card2);border:1px solid var(--line);border-left:4px solid var(--ok);
+         color:var(--txt);padding:12px 18px;border-radius:10px;font-size:13px;max-width:80vw;
+         box-shadow:0 6px 24px #000a;opacity:0;pointer-events:none;transition:opacity .25s;
+         white-space:pre-line}
+  .toast.on{opacity:1}
+  .toast.bad{border-left-color:var(--bad)}
   .grow{flex:1}
 </style>
 </head>
 <body>
 <header>
-  <h1>🖼️ Anime Image Curator · 动漫图筛 <span class="mut" id="rootinfo"></span></h1>
+  <h1><span data-i18n="app_title">🖼️ Anime Image Curator · 动漫图筛</span> <span class="mut" id="rootinfo"></span></h1>
   <div class="row">
-    <input id="folder" type="text" placeholder="图片文件夹绝对路径，例如 D:\imgs\velina"/>
-    <label class="mut"><input id="recursive" type="checkbox" checked style="min-width:auto"/> 含子目录</label>
-    <button class="primary" id="scanbtn" onclick="doScan()">扫描 Scan</button>
+    <input id="folder" type="text" data-i18n-ph="folder_ph" placeholder="图片文件夹绝对路径，例如 D:\imgs\velina"/>
+    <label class="mut"><input id="recursive" type="checkbox" checked style="min-width:auto"/> <span data-i18n="recursive">含子目录</span></label>
+    <button class="primary" id="scanbtn" onclick="doScan()" data-i18n="scan">扫描 Scan</button>
     <span class="grow"></span>
-    <button onclick="exportJSON()">导出精选(JSON)</button>
-    <input id="dest" type="text" placeholder="拷贝精选到目录(可选)" style="min-width:220px"/>
-    <button onclick="exportCopy()">拷贝精选</button>
-    <label class="mut" title="把本次的选择结果+全部打分特征记录到 data/feedback/，用于以后校准结构打分权重">
-      <input id="record" type="checkbox" style="min-width:auto"/> 记录本次导出</label>
+    <button onclick="exportJSON()" data-i18n="export_json">导出精选(JSON)</button>
+    <input id="dest" type="text" data-i18n-ph="dest_ph" placeholder="拷贝精选到目录(可选)" style="min-width:220px"/>
+    <button onclick="exportCopy()" data-i18n="copy_selected">拷贝精选</button>
+    <label class="mut" data-i18n-title="record_title" title="把本次的选择结果+全部打分特征记录到 data/feedback/，用于以后校准结构打分权重">
+      <input id="record" type="checkbox" style="min-width:auto"/> <span data-i18n="record">记录本次导出</span></label>
+    <button id="langbtn" onclick="toggleLang()" title="Switch language / 切换语言">EN</button>
   </div>
   <div class="row" style="margin-top:8px">
-    <span class="mut">美观度模型:</span>
+    <span class="mut" data-i18n="ae_model">美观度模型:</span>
     <select id="aemodel" onchange="onAeChange()" style="min-width:260px"></select>
     <span class="mut" id="aedesc"></span>
   </div>
   <div class="chips" id="chips"></div>
   <div class="row" style="margin-top:6px">
     <label class="mut" style="cursor:pointer"><input id="filterflags" type="checkbox"
-      style="min-width:auto" onchange="render()"/> 只看有结构问题的组</label>
+      style="min-width:auto" onchange="render()"/> <span data-i18n="only_flagged">只看有结构问题的组</span></label>
     <span class="mut" id="shadowhint"></span>
   </div>
   <div class="scanprog" id="scanprog" hidden>
     <div class="sp-top">
-      <span class="sp-phase"><span class="sp-dot"></span><span id="spphase">准备中</span></span>
+      <span class="sp-phase"><span class="sp-dot"></span><span id="spphase" data-i18n="preparing">准备中</span></span>
       <span class="sp-count" id="spcount"></span>
       <span class="sp-pct" id="sppct"></span>
       <span class="sp-eta" id="speta"></span>
@@ -150,26 +160,155 @@
   <div class="err" id="err"></div>
 </header>
 <main>
-  <div class="empty" id="empty">输入图片文件夹路径并点击「扫描」。同一段 prompt 的图会自动归为一组，每组推荐综合分最高的一张。</div>
+  <div class="empty" id="empty"><span data-i18n="empty_hint">输入图片文件夹路径并点击「扫描」。同一段 prompt 的图会自动归为一组，每组推荐综合分最高的一张。</span></div>
   <div id="groups"></div>
 </main>
 
 <div class="lightbox" id="lb" onclick="lbBackdropClick(event)">
-  <button class="lb-nav prev" onclick="lbNav(-1);event.stopPropagation()" title="上一张 (←)">◀</button>
+  <button class="lb-nav prev" onclick="lbNav(-1);event.stopPropagation()" data-i18n-title="lb_prev" title="上一张 (←)">◀</button>
   <img id="lbimg"/><div class="cap" id="lbcap"></div>
   <div class="lb-actions">
-    <button onclick="lbSelect();event.stopPropagation()">✔ 选择它 (Enter)</button>
-    <button id="lbov" onclick="lbToggleOverlay();event.stopPropagation()" style="background:var(--card2);border:1px solid var(--line)">☸ 骨架 (O)</button>
+    <button onclick="lbSelect();event.stopPropagation()" data-i18n="lb_select">✔ 选择它 (Enter)</button>
+    <button id="lbov" onclick="lbToggleOverlay();event.stopPropagation()" data-i18n="lb_skeleton" style="background:var(--card2);border:1px solid var(--line)">☸ 骨架 (O)</button>
     <span class="lb-counter" id="lbcounter"></span>
   </div>
-  <button class="lb-nav next" onclick="lbNav(1);event.stopPropagation()" title="下一张 (→)">▶</button>
+  <button class="lb-nav next" onclick="lbNav(1);event.stopPropagation()" data-i18n-title="lb_next" title="下一张 (→)">▶</button>
 </div>
 
+<div class="toast" id="toast"></div>
 <script>
 let STATE=null;
 const $=id=>document.getElementById(id);
-const SCORE_LABEL={quality:"质检",aesthetic:"美观",tagger_fidelity:"还原",vlm_judge:"VLM",structure:"结构"};
-const PART_LABEL={hand_l:"左手",hand_r:"右手",person:"人体",feet:"脚"};
+
+/* ---- i18n (zh/en) ---- */
+const I18N={
+zh:{
+ app_title:"🖼️ Anime Image Curator · 动漫图筛",
+ folder_ph:"图片文件夹绝对路径，例如 D:\\imgs\\velina",
+ recursive:"含子目录", scan:"扫描 Scan", scanning:"扫描中…",
+ export_json:"导出精选(JSON)", dest_ph:"拷贝精选到目录(可选)", copy_selected:"拷贝精选",
+ record:"记录本次导出",
+ record_title:"把本次的选择结果+全部打分特征记录到 data/feedback/，用于以后校准结构打分权重",
+ ae_model:"美观度模型:", only_flagged:"只看有结构问题的组", preparing:"准备中",
+ empty_hint:"输入图片文件夹路径并点击「扫描」。同一段 prompt 的图会自动归为一组，每组推荐综合分最高的一张。",
+ lb_prev:"上一张 (←)", lb_next:"下一张 (→)", lb_select:"✔ 选择它 (Enter)", lb_skeleton:"☸ 骨架 (O)",
+ chip_on:"启用", chip_off:"未启用",
+ status_fail:"状态接口 /api/status 加载失败：{e}（按 F12 查看 Console/Network，或检查 cmd 窗口）",
+ no_scorers:"响应缺少 scorers 字段",
+ shadow_hint:"结构分为影子模式（仅展示+记录，不影响排序），校准后再启用权重",
+ structure_active:"结构分已转正参与排序（权重见配置 weights.structure）",
+ extras_hint:"提示：未启用的打分项可用 uv sync --extra aesthetic / structure 开启",
+ not_installed:"未安装", not_installed_prefix:"未安装：",
+ switch_fail:"切换失败：", rescanning:"已切换到新模型，正在用新模型重新打分…",
+ ph_listing:"列出文件", ph_scoring:"逐图打分", ph_grouping:"分组排序", ph_saving:"写入证据",
+ ph_done:"完成", ph_error:"出错", ph_idle:"空闲",
+ sec:"秒", min:"分",
+ prog_count:"{done} / {total} 张", prog_groups:"{n} 组",
+ prog_elapsed:"已用 {t}", prog_eta:" · 剩余约 {t}",
+ prog_current:"▸ {f}", prog_loading:"首次打分可能在加载/下载模型，请稍候…",
+ prog_unknown_err:"未知错误", prog_summary:"共 {total} 张 · {groups} 组",
+ scan_start_fail:"启动扫描失败：", need_folder:"请填写文件夹路径", scan_fail:"扫描失败",
+ partial_errors:"部分文件出错：",
+ no_prompt_images:"没有找到带 prompt 的图片。", no_prompt:"(无 prompt)",
+ char_tag:"角色: {id}", suspect_group:"⚠ 疑似整组弃选",
+ group_n:"组 #{n}", n_images:"{n} 张",
+ vis_person:"人", vis_hand_l:"手L", vis_hand_r:"手R",
+ part_body:"骨", part_hands:"手", part_yolo:"Y",
+ st_shadow_tip:"影子模式：仅展示不影响排序", st_active_tip:"已参与综合排序（低权重）",
+ structure:"结构",
+ outfit_low_flag:"服装tag匹配低({pct})", outfit:"服装:{name} {pct}",
+ recommended:"推荐", select_none:"全部不选", no_flagged_groups:"没有带结构问题的组。",
+ visible:"可见", not_detected:"未检出",
+ lb_structure:" · 结构 {pct}", lb_composite:"{file} · 综合 {pct}{st}",
+ lb_counter:"组{gi}/{gtotal} · {mi}/{mtotal}",
+ need_dest:"请填写目标目录", copy_fail:"拷贝失败",
+ copied_ok:"已拷贝 {n} 张到:\n{dest}", feedback_saved:"\n已记录反馈: {path}",
+ export_fail:"导出失败：", network_fail:"请求失败：{e}",
+ score_quality:"质检", score_aesthetic:"美观", score_fidelity:"还原", score_vlm:"VLM", score_structure:"结构",
+ part_hand_l:"左手", part_hand_r:"右手", part_person:"人体", part_feet:"脚"
+},
+en:{
+ app_title:"🖼️ Anime Image Curator",
+ folder_ph:"Absolute path to image folder, e.g. D:\\imgs\\velina",
+ recursive:"Include subfolders", scan:"Scan", scanning:"Scanning…",
+ export_json:"Export picks (JSON)", dest_ph:"Copy picks to folder (optional)", copy_selected:"Copy picks",
+ record:"Record this export",
+ record_title:"Save this export's selections + all scoring features to data/feedback/ for later weight calibration",
+ ae_model:"Aesthetic model:", only_flagged:"Only groups with structure issues", preparing:"Preparing",
+ empty_hint:"Enter an image folder path and click Scan. Images sharing the same prompt are grouped automatically; each group recommends the highest composite score.",
+ lb_prev:"Previous (←)", lb_next:"Next (→)", lb_select:"✔ Select it (Enter)", lb_skeleton:"☸ Skeleton (O)",
+ chip_on:"on", chip_off:"off",
+ status_fail:"Failed to load /api/status: {e} (press F12 for Console/Network, or check the cmd window)",
+ no_scorers:"Response missing the scorers field",
+ shadow_hint:"Structure score is in shadow mode (display + logging only, no ranking impact) until calibrated",
+ structure_active:"Structure score is active in ranking (weight: weights.structure in config)",
+ extras_hint:"Tip: enable disabled scorers with uv sync --extra aesthetic / structure",
+ not_installed:"not installed", not_installed_prefix:"Not installed: ",
+ switch_fail:"Switch failed: ", rescanning:"Switched model — re-scoring with the new model…",
+ ph_listing:"Listing files", ph_scoring:"Scoring images", ph_grouping:"Grouping & ranking", ph_saving:"Writing evidence",
+ ph_done:"Done", ph_error:"Error", ph_idle:"Idle",
+ sec:"s", min:"m",
+ prog_count:"{done} / {total} images", prog_groups:"{n} groups",
+ prog_elapsed:"elapsed {t}", prog_eta:" · ~{t} left",
+ prog_current:"▸ {f}", prog_loading:"First score may be loading/downloading models, please wait…",
+ prog_unknown_err:"Unknown error", prog_summary:"{total} images · {groups} groups",
+ scan_start_fail:"Scan failed to start: ", need_folder:"Please enter a folder path", scan_fail:"Scan failed",
+ partial_errors:"Some files errored: ",
+ no_prompt_images:"No images with embedded prompts found.", no_prompt:"(no prompt)",
+ char_tag:"Character: {id}", suspect_group:"⚠ Possibly skip whole group",
+ group_n:"Group #{n}", n_images:"{n} images",
+ vis_person:"Body", vis_hand_l:"HandL", vis_hand_r:"HandR",
+ part_body:"Skel", part_hands:"Hand", part_yolo:"Y",
+ st_shadow_tip:"Shadow mode: display only, no ranking impact", st_active_tip:"Active in composite ranking (low weight)",
+ structure:"Structure",
+ outfit_low_flag:"Low outfit-tag match ({pct})", outfit:"Outfit: {name} {pct}",
+ recommended:"PICK", select_none:"Select none", no_flagged_groups:"No groups with structure issues.",
+ visible:"visible", not_detected:"not detected",
+ lb_structure:" · Structure {pct}", lb_composite:"{file} · Composite {pct}{st}",
+ lb_counter:"Group {gi}/{gtotal} · {mi}/{mtotal}",
+ need_dest:"Please enter a destination folder", copy_fail:"Copy failed",
+ copied_ok:"Copied {n} image(s) to:\n{dest}", feedback_saved:"\nFeedback saved: {path}",
+ export_fail:"Export failed: ", network_fail:"Request failed: {e}",
+ score_quality:"Quality", score_aesthetic:"Aesthetic", score_fidelity:"Fidelity", score_vlm:"VLM", score_structure:"Structure",
+ part_hand_l:"Left hand", part_hand_r:"Right hand", part_person:"Body", part_feet:"Feet"
+}};
+let LANG=(()=>{try{const s=localStorage.getItem("curator_lang");if(s==="zh"||s==="en")return s;}catch(e){}
+  return /^zh/i.test(navigator.language||"")?"zh":"en";})();
+function t(key,params){let s=(I18N[LANG]&&I18N[LANG][key])!=null?I18N[LANG][key]:key;
+  if(params)for(const k in params)s=s.split("{"+k+"}").join(String(params[k]));return s;}
+function applyLang(){
+  document.documentElement.lang=(LANG==="zh"?"zh-CN":"en");
+  document.querySelectorAll("[data-i18n]").forEach(el=>{el.textContent=t(el.dataset.i18n);});
+  document.querySelectorAll("[data-i18n-ph]").forEach(el=>{el.placeholder=t(el.dataset.i18nPh);});
+  document.querySelectorAll("[data-i18n-title]").forEach(el=>{el.title=t(el.dataset.i18nTitle);});
+  const lb=$("langbtn");if(lb)lb.textContent=LANG==="zh"?"EN":"中文";
+  if($("scanbtn").disabled)$("scanbtn").textContent=t("scanning");
+  SCORE_LABEL={quality:t("score_quality"),aesthetic:t("score_aesthetic"),tagger_fidelity:t("score_fidelity"),character_ccip:t("score_fidelity"),vlm_judge:t("score_vlm"),structure:t("score_structure")};
+  PART_LABEL={hand_l:t("part_hand_l"),hand_r:t("part_hand_r"),person:t("part_person"),feet:t("part_feet")};
+  PHASE_LABEL={listing:t("ph_listing"),scoring:t("ph_scoring"),grouping:t("ph_grouping"),saving:t("ph_saving"),done:t("ph_done"),error:t("ph_error"),idle:t("ph_idle")};
+}
+function toggleLang(){LANG=LANG==="zh"?"en":"zh";
+  try{localStorage.setItem("curator_lang",LANG);}catch(e){}
+  applyLang();loadStatus();if(STATE)render();
+  if(!$("scanprog").hidden)pollProg();
+  if($("lb").classList.contains("on"))_lbRender();}
+/* English overrides for backend-provided aesthetic model texts (zh keeps backend values).
+   Keys are the real backend ids from aesthetic_backends.py. */
+const AE_I18N={
+ "improved-clip":{domain:"general (photo/AI)",desc:"CLIP+MLP baseline trained on photos; weak on anime."},
+ "shadow-v2":{domain:"anime",desc:"1.1B ViT, 1024×1024, danbooru-trained. Strongest community anime aesthetic model (mirror of a delisted original)."},
+ "skytnt-anime":{domain:"anime",desc:"ConvNeXtV2 ONNX, danbooru-trained. Fast on CPU/GPU, good for large batches."},
+ "aesthetic-predictor-v2-5":{domain:"general + illustration",desc:"SigLIP with explicit illustration support; best-maintained community ecosystem."}
+};
+function aeDesc(b){return (LANG==="en"&&AE_I18N[b.id])?AE_I18N[b.id].desc:b.desc;}
+let toastTimer=null;
+function toast(msg,bad){const el=$("toast");if(!el)return;
+  el.textContent=msg;el.classList.toggle("bad",!!bad);el.classList.add("on");
+  if(toastTimer)clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove("on"),bad?9000:5000);}
+
+let SCORE_LABEL={quality:t("score_quality"),aesthetic:t("score_aesthetic"),tagger_fidelity:t("score_fidelity"),character_ccip:t("score_fidelity"),vlm_judge:t("score_vlm"),structure:t("score_structure")};
+let PART_LABEL={hand_l:t("part_hand_l"),hand_r:t("part_hand_r"),person:t("part_person"),feet:t("part_feet")};
 
 async function loadStatus(){
   let s;
@@ -177,25 +316,23 @@ async function loadStatus(){
     const r=await fetch("/api/status");
     if(!r.ok) throw new Error("HTTP "+r.status);
     s=await r.json();
-    if(!s||!Array.isArray(s.scorers)) throw new Error("响应缺少 scorers 字段");
+    if(!s||!Array.isArray(s.scorers)) throw new Error(t("no_scorers"));
   }catch(e){
-    $("err").textContent="状态接口 /api/status 加载失败："+String(e.message||e)+"（按 F12 查看 Console/Network，或检查 cmd 窗口）";
+    $("err").textContent=t("status_fail",{e:String(e.message||e)});
     return;
   }
   if(s.root) $("rootinfo").textContent="· "+s.root;
   const chips=s.scorers.map(x=>{
-    const t=x.available?"启用":"未启用";
+    const st=x.available?t("chip_on"):t("chip_off");
     const title=x.available?"":(x.reason||"");
-    return `<span class="chip ${x.available?'on':'off'}" title="${title}">${x.label} · ${t}</span>`;
+    return `<span class="chip ${x.available?'on':'off'}" title="${title}">${(LANG==="en"&&SCORE_LABEL[x.name])?SCORE_LABEL[x.name]:x.label} · ${st}</span>`;
   }).join("");
   const st=s.scorers.find(x=>x.name==="structure");
   if(st&&st.available){
-    $("shadowhint").textContent=st.shadow
-      ? "结构分为影子模式（仅展示+记录，不影响排序），校准后再启用权重"
-      : "结构分已转正参与排序（权重见配置 weights.structure）";
+    $("shadowhint").textContent=st.shadow?t("shadow_hint"):t("structure_active");
   }
   const hint=s.scorers.some(x=>!x.available)?
-    ' <span class="mut">提示：未启用的打分项可用 uv sync --extra aesthetic / structure 开启</span>':"";
+    ` <span class="mut">${t("extras_hint")}</span>`:"";
   $("chips").innerHTML=chips+hint;
   renderAeSelect(s.aesthetic_backends||[]);
 }
@@ -204,7 +341,7 @@ function renderAeSelect(backends){
   const sel=$("aemodel"); if(!sel) return;
   sel.innerHTML=backends.map(b=>{
     const dis=b.available?"":"disabled";
-    const tag=b.available?b.domain:"未安装";
+    const tag=b.available?(LANG==="en"&&AE_I18N[b.id]?AE_I18N[b.id].domain:b.domain):t("not_installed");
     return `<option value="${b.id}" ${b.active?'selected':''} ${dis}>${b.label} · ${tag} · ${b.approx_size}</option>`;
   }).join("");
   updateAeDesc(backends);
@@ -214,31 +351,34 @@ function renderAeSelect(backends){
 function updateAeDesc(backends){
   const sel=$("aemodel"); const id=sel.value;
   const b=(backends||sel._backends||[]).find(x=>x.id===id);
-  $("aedesc").textContent=b?(b.available?b.desc:("未安装："+(b.reason||""))):"";
+  $("aedesc").textContent=b?(b.available?aeDesc(b):(t("not_installed_prefix")+(b.reason||""))):"";
 }
 
 async function onAeChange(){
   const id=$("aemodel").value; updateAeDesc();
   const had=STATE&&STATE.groups&&STATE.groups.length;
-  const r=await fetch("/api/set_aesthetic",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({backend:id})});
-  const j=await r.json();
-  if(!r.ok){alert("切换失败："+(j.detail||""));return;}
+  let r,j;
+  try{
+    r=await fetch("/api/set_aesthetic",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({backend:id})});
+    j=await r.json().catch(()=>({}));
+  }catch(e){toast(t("network_fail",{e:String(e.message||e)}),true);return;}
+  if(!r.ok){toast(t("switch_fail")+(j.detail||r.status),true);return;}
   $("err").textContent="";
   if(had&&j.needs_rescan){
-    $("err").textContent="已切换到新模型，正在用新模型重新打分…";
+    $("err").textContent=t("rescanning");
     await doScan();
     $("err").textContent="";
   }
 }
 
 /* ---- live scan progress ---- */
-const PHASE_LABEL={listing:"列出文件",scoring:"逐图打分",grouping:"分组排序",saving:"写入证据",done:"完成",error:"出错",idle:"空闲"};
+let PHASE_LABEL={listing:t("ph_listing"),scoring:t("ph_scoring"),grouping:t("ph_grouping"),saving:t("ph_saving"),done:t("ph_done"),error:t("ph_error"),idle:t("ph_idle")};
 let progTimer=null, progAuto=false, progSeenRunning=false;
 
 function fmtDur(s){
   s=Math.max(0,Math.round(s));
-  return s<60? s+"秒" : Math.floor(s/60)+"分"+(s%60)+"秒";
+  return s<60? s+t("sec") : Math.floor(s/60)+t("min")+(s%60)+t("sec");
 }
 
 function renderProg(p){
@@ -254,20 +394,20 @@ function renderProg(p){
   const pctv=scoring?Math.round(p.done/p.total*100):((p.phase==="done"||p.phase==="error")?100:0);
   fill.style.width=pctv+"%";
   $("sppct").textContent=(scoring||p.phase==="done")?pctv+"%":"";
-  let count=p.total?`${p.done} / ${p.total} 张`:"";
-  if(p.groups) count+=(count?" · ":"")+`${p.groups} 组`;
+  let count=p.total?t("prog_count",{done:p.done,total:p.total}):"";
+  if(p.groups) count+=(count?" · ":"")+t("prog_groups",{n:p.groups});
   $("spcount").textContent=count;
   const elapsed=p.started?Date.now()/1000-p.started:0;
   let eta="";
   if(p.running){
-    eta="已用 "+fmtDur(elapsed);
-    if(scoring&&p.done>0) eta+=" · 剩余约 "+fmtDur(elapsed/p.done*(p.total-p.done));
+    eta=t("prog_elapsed",{t:fmtDur(elapsed)});
+    if(scoring&&p.done>0) eta+=t("prog_eta",{t:fmtDur(elapsed/p.done*(p.total-p.done))});
   }
   $("speta").textContent=eta;
-  let file=p.current?("▸ "+p.current):"";
-  if(p.phase==="scoring"&&p.done===0&&elapsed>6) file="首次打分可能在加载/下载模型，请稍候…";
-  if(p.phase==="error") file=p.error||"未知错误";
-  if(p.phase==="done") file=`共 ${p.total} 张 · ${p.groups} 组`;
+  let file=p.current?t("prog_current",{f:p.current}):"";
+  if(p.phase==="scoring"&&p.done===0&&elapsed>6) file=t("prog_loading");
+  if(p.phase==="error") file=p.error||t("prog_unknown_err");
+  if(p.phase==="done") file=t("prog_summary",{total:p.total,groups:p.groups});
   $("spfile").textContent=file;
   $("spfile").title=p.current||"";
 }
@@ -283,9 +423,9 @@ async function pollProg(){
       stopProgPoll();
       if(progAuto){
         progAuto=false;
-        $("scanbtn").textContent="扫描 Scan";$("scanbtn").disabled=false;
+        $("scanbtn").textContent=t("scan");$("scanbtn").disabled=false;
         if(p.phase==="done") await loadState();
-        else $("err").textContent="启动扫描失败："+(p.error||"");
+        else $("err").textContent=t("scan_start_fail")+(p.error||"");
       }
       setTimeout(()=>{const b=$("scanprog");if(b&&!b.classList.contains("error"))b.hidden=true;},1200);
     }
@@ -302,20 +442,20 @@ function stopProgPoll(){if(progTimer){clearInterval(progTimer);progTimer=null;}}
 
 async function doScan(){
   const folder=$("folder").value.trim();
-  if(!folder){alert("请填写文件夹路径");return;}
-  $("err").textContent=""; $("scanbtn").textContent="扫描中…"; $("scanbtn").disabled=true;
+  if(!folder){toast(t("need_folder"),true);return;}
+  $("err").textContent=""; $("scanbtn").textContent=t("scanning"); $("scanbtn").disabled=true;
   renderProg({running:true,phase:"listing",total:0,done:0,current:"",groups:0,started:Date.now()/1000,error:""});
   startProgPoll(false);
   try{
     const r=await fetch("/api/scan",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({folder,recursive:$("recursive").checked})});
     const j=await r.json();
-    if(!r.ok){throw new Error(j.detail||"扫描失败");}
+    if(!r.ok){throw new Error(j.detail||t("scan_fail"));}
     await loadState();
-    if(j.errors&&j.errors.length){$("err").textContent="部分文件出错："+j.errors.slice(0,5).join(" | ");}
+    if(j.errors&&j.errors.length){$("err").textContent=t("partial_errors")+j.errors.slice(0,5).join(" | ");}
   }catch(e){$("err").textContent=String(e.message||e);$("scanprog").hidden=true;}
   finally{
-    $("scanbtn").textContent="扫描 Scan";$("scanbtn").disabled=false;
+    $("scanbtn").textContent=t("scan");$("scanbtn").disabled=false;
     stopProgPoll();
     if(!$("scanprog").hidden){
       try{renderProg(await (await fetch("/api/progress")).json());}catch(e){}
@@ -332,20 +472,20 @@ async function loadState(){
 function render(){
   $("empty").style.display="none";
   const g=$("groups"); g.innerHTML="";
-  if(!STATE||!STATE.groups.length){g.innerHTML='<div class="empty">没有找到带 prompt 的图片。</div>';return;}
+  if(!STATE||!STATE.groups.length){g.innerHTML='<div class="empty">'+t("no_prompt_images")+'</div>';return;}
   const onlyFlagged=$("filterflags")&&$("filterflags").checked;
   let shown=0;
   STATE.groups.forEach((grp,gi)=>{
     const hasFlags=grp.members.some(m=>Object.values(m.scores||{}).some(v=>(v.flags||[]).length));
     if(onlyFlagged&&!hasFlags) return;
     shown++;
-    const pos=(grp.positive||"(无 prompt)");
+    const pos=(grp.positive||t("no_prompt"));
     const el=document.createElement("div"); el.className="group"; el.dataset.gi=gi;
-    const chars=grp.character_id?`<span class="tag">角色: ${grp.character_id}</span>`:"";
-    const suspect=grp.suspect?`<span class="tag suspect" title="${escapeHtml(grp.suspect)}">⚠ 疑似整组弃选</span>`:"";
+    const chars=grp.character_id?`<span class="tag">${t("char_tag",{id:grp.character_id})}</span>`:"";
+    const suspect=grp.suspect?`<span class="tag suspect" title="${escapeHtml(grp.suspect)}">${t("suspect_group")}</span>`:"";
     el.innerHTML=`<div class="ghead">
-      <div class="meta">${chars}<span class="tag">${grp.members.length} 张</span>
-        ${suspect}<span class="mut">组 #${gi+1}</span></div>
+      <div class="meta">${chars}<span class="tag">${t("n_images",{n:grp.members.length})}</span>
+        ${suspect}<span class="mut">${t("group_n",{n:gi+1})}</span></div>
       <div class="pos">${escapeHtml(pos)}</div>
     </div><div class="cards"></div>`;
     const cards=el.querySelector(".cards");
@@ -362,21 +502,21 @@ function render(){
         const ssub=st.subs||{};
         const vis=ssub.visible||{};
         const icons=[];
-        if("person" in vis) icons.push(visIcon("人",vis.person));
-        if("hand_l" in vis) icons.push(visIcon("手L",vis.hand_l));
-        if("hand_r" in vis) icons.push(visIcon("手R",vis.hand_r));
+        if("person" in vis) icons.push(visIcon(t("vis_person"),vis.person));
+        if("hand_l" in vis) icons.push(visIcon(t("vis_hand_l"),vis.hand_l));
+        if("hand_r" in vis) icons.push(visIcon(t("vis_hand_r"),vis.hand_r));
         (vis.yolo_parts||[]).forEach(p=>icons.push(visIcon(p,true)));
         const parts=["body","hands","yolo"].filter(k=>ssub[k]!=null)
-          .map(k=>`${({body:"骨",hands:"手",yolo:"Y"})[k]}${pct(ssub[k])}`).join(" ");
+          .map(k=>`${({body:t("part_body"),hands:t("part_hands"),yolo:t("part_yolo")})[k]}${pct(ssub[k])}`).join(" ");
         const stShadow=(STATE.scorers||[]).find(x=>x.name==="structure")?.shadow;
-        stHtml=`<span class="sub st-shadow" title="${stShadow?"影子模式：仅展示不影响排序":"已参与综合排序（低权重）"}">结构 ${pct(st.score)}${parts?" · "+parts:""} ${icons.join("")}</span>`;
+        stHtml=`<span class="sub st-shadow" title="${stShadow?t("st_shadow_tip"):t("st_active_tip")}">${t("structure")} ${pct(st.score)}${parts?" · "+parts:""} ${icons.join("")}</span>`;
       }
       const flags=[];
       Object.entries(m.scores||{}).forEach(([k,v])=>(v.flags||[]).forEach(f=>flags.push(k==="structure"?f:`[${SCORE_LABEL[k]||k}] ${f}`)));
-      if(m.outfit && m.outfit_ratio<0.6) flags.push(`服装tag匹配低(${pct(m.outfit_ratio)})`);
+      if(m.outfit && m.outfit_ratio<0.6) flags.push(t("outfit_low_flag",{pct:pct(m.outfit_ratio)}));
       const flagHtml=flags.map(f=>`<span class="flag">${escapeHtml(f)}</span>`).join("");
-      const out=m.outfit?`<span class="sub">服装:${escapeHtml(m.outfit)} ${pct(m.outfit_ratio)}</span>`:"";
-      c.innerHTML=`${rec?'<span class="rec">推荐</span>':''}
+      const out=m.outfit?`<span class="sub">${t("outfit",{name:escapeHtml(m.outfit),pct:pct(m.outfit_ratio)})}</span>`:"";
+      c.innerHTML=`${rec?`<span class="rec">${t("recommended")}</span>`:''}
         <span class="badge">${pct(m.composite)}</span>
         <img loading="lazy" src="/api/thumb?size=512&path=${encodeURIComponent(m.path)}"
              onclick="event.stopPropagation();showFull(${gi},${idx})"/>
@@ -393,16 +533,16 @@ function render(){
     const isBlank=(grp.selected===null);
     const blank=document.createElement("div");
     blank.className="icard blank"+(isBlank?" sel":"");
-    blank.innerHTML=`<span class="blank-icon">⊘</span><span class="blank-text">全部不选</span>`;
+    blank.innerHTML=`<span class="blank-icon">⊘</span><span class="blank-text">${t("select_none")}</span>`;
     blank.onclick=()=>selectImg(grp.key,null,blank);
     cards.appendChild(blank);
     g.appendChild(el);
   });
-  if(onlyFlagged&&!shown){g.innerHTML='<div class="empty">没有带结构问题的组。</div>';}
+  if(onlyFlagged&&!shown){g.innerHTML='<div class="empty">'+t("no_flagged_groups")+'</div>';}
 }
 
 function visIcon(label,on){
-  return `<span class="vis ${on?'y':'n'}" title="${escapeHtml(label)}:${on?'可见':'未检出'}">${escapeHtml(label)}${on?'✓':'—'}</span>`;
+  return `<span class="vis ${on?'y':'n'}" title="${escapeHtml(label)}:${on?t("visible"):t("not_detected")}">${escapeHtml(label)}${on?'✓':'—'}</span>`;
 }
 
 async function selectImg(key,filename,cardEl){
@@ -433,9 +573,9 @@ function _lbRender(){
   const m=grp.members[LB.idx];
   $("lbimg").src="/api/image?path="+encodeURIComponent(m.path);
   const st=(m.scores||{}).structure;
-  const stTxt=st?` · 结构 ${pct(st.score)}${st.flags&&st.flags.length?" · "+st.flags.slice(0,3).join("/"):""}`:"";
-  $("lbcap").textContent=`${m.filename} · 综合 ${pct(m.composite)}${stTxt}`;
-  $("lbcounter").textContent=`组${LB.gi+1}/${STATE.groups.length} · ${LB.idx+1}/${grp.members.length}`;
+  const stTxt=st?t("lb_structure",{pct:pct(st.score)})+(st.flags&&st.flags.length?" · "+st.flags.slice(0,3).join("/"):""):"";
+  $("lbcap").textContent=t("lb_composite",{file:m.filename,pct:pct(m.composite),st:stTxt});
+  $("lbcounter").textContent=t("lb_counter",{gi:LB.gi+1,gtotal:STATE.groups.length,mi:LB.idx+1,mtotal:grp.members.length});
   // overlay toggle only when structure data exists (scorer ran)
   $("lbov").style.display=st?"":"none";
   $("lbov").classList.remove("on");
@@ -496,35 +636,46 @@ document.addEventListener("keydown",e=>{
 
 async function exportJSON(){
   const record=$("record")&&$("record").checked;
-  const j=await (await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({mode:"json",record})})).json();
+  let r,j;
+  try{
+    r=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({mode:"json",record})});
+    j=await r.json().catch(()=>null);
+  }catch(e){toast(t("network_fail",{e:String(e.message||e)}),true);return;}
+  if(!r.ok||!j){toast(t("export_fail")+((j&&j.detail)||("HTTP "+r.status)),true);return;}
   const blob=new Blob([JSON.stringify(j.selected,null,2)],{type:"application/json"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);
   a.download="curator-selected.json";a.click();
-  if(record&&j.feedback) $("err").textContent="";
+  if(record&&j.feedback) toast(t("feedback_saved",{path:j.feedback}).trim());
 }
 async function exportCopy(){
   const dest=$("dest").value.trim();
-  if(!dest){alert("请填写目标目录");return;}
+  if(!dest){toast(t("need_dest"),true);return;}
   const record=$("record")&&$("record").checked;
-  const r=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({mode:"copy",dest,record})});
-  const j=await r.json();
-  if(!r.ok){alert(j.detail||"拷贝失败");return;}
-  alert("已拷贝 "+j.copied.length+" 张到:\n"+dest+(record&&j.feedback?"\n已记录反馈: "+j.feedback:""));
+  let r,j;
+  try{
+    r=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({mode:"copy",dest,record})});
+    j=await r.json().catch(()=>null);
+  }catch(e){toast(t("network_fail",{e:String(e.message||e)}),true);return;}
+  if(!r.ok||!j){toast(t("copy_fail")+" — "+((j&&j.detail)||("HTTP "+r.status)),true);return;}
+  let msg=t("copied_ok",{n:j.copied.length,dest});
+  if(record&&j.feedback) msg+=t("feedback_saved",{path:j.feedback});
+  toast(msg);
 }
 
 const pct=x=>(x==null?"-":Math.round(x*100));
 function escapeHtml(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 function escapeAttr(s){return (s||"").replace(/'/g,"\\'");}
 
+applyLang();
 loadStatus().then(()=>fetch("/api/state").then(r=>r.json()).then(s=>{
   if(s&&s.root){$("folder").value=s.root;}
   if(s&&s.groups&&s.groups.length){STATE=s;render();}
   // --folder auto-scan (or a scan started in another tab) already running?
   const p=s&&s.progress;
   if(p&&p.running){
-    $("scanbtn").textContent="扫描中…";$("scanbtn").disabled=true;
+    $("scanbtn").textContent=t("scanning");$("scanbtn").disabled=true;
     renderProg(p);startProgPoll(true);
   }
 }));
