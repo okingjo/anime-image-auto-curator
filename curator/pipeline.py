@@ -414,6 +414,23 @@ class Curator:
         import datetime as _dt
         import uuid as _uuid
 
+        # Scorers emit np.float32/ndarray in member features; plain json.dumps
+        # would TypeError -> 500 AFTER the copy already succeeded. Guarded
+        # import keeps base installs (no numpy) working.
+        try:
+            import numpy as _np
+        except ImportError:
+            _np = None
+
+        def _default(o):
+            if _np is not None:
+                if isinstance(o, _np.generic):
+                    return o.item()
+                if isinstance(o, _np.ndarray):
+                    return o.tolist()
+            raise TypeError(
+                f"Object of type {o.__class__.__name__} is not JSON serializable")
+
         st = self.scorers.get("structure")
         record = {
             "schema": "aic.feedback.v1.1",
@@ -451,5 +468,5 @@ class Curator:
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / f"feedback-{_dt.date.today().isoformat()}.jsonl"
         with open(path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            fh.write(json.dumps(record, ensure_ascii=False, default=_default) + "\n")
         return str(path)
